@@ -1,0 +1,11 @@
+node_modules
+.pnpm-store
+.env
+.env.*
+dist
+coverage
+*.log
+apps/api/generated
+apps/api/prisma/dev.db
+
+!.env.example
