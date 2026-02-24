@@ -33,10 +33,10 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: setup node (pinned)
+      - name: setup node 18 (pinned)
         uses: actions/setup-node@v4
         with:
-          node-version: '20.11.1'
+          node-version: '18.20.4'
 
       - name: setup Docker
         uses: docker/setup-buildx-action@v3
@@ -47,8 +47,8 @@ jobs:
       - name: run tests
         run: ./scripts/test.sh
 
-      - name: run verify scripts
-        run: bash -n scripts/verify.sh loadtests/verify-no-oversell.sh loadtests/verify-consistency.sh
+      - name: run verify
+        run: ./scripts/verify.sh
 
       - name: report status
         if: always()

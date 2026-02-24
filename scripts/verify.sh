@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "[verify] Ejecutando tests reproducibles..."
 ./scripts/test.sh
 
-if [[ -z "${DATABASE_URL:-}" || -z "${EVENT_ID:-}" ]]; then
-  echo "DATABASE_URL y EVENT_ID son requeridos para verify-consistency.sh" >&2
+echo "[verify] Levantando servicios mínimos para verificaciones SQL..."
+docker compose up -d postgres redis api >/dev/null
+
+EVENT_ID="${EVENT_ID:-}"
+if [[ -z "$EVENT_ID" ]]; then
+  EVENT_ID="$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-articket}" -d "${POSTGRES_DB:-articket}" -t -A -c 'SELECT id::text FROM "Event" ORDER BY "createdAt" DESC LIMIT 1;' | tr -d '\r')"
+fi
+
+if [[ -z "$EVENT_ID" ]]; then
+  echo "[verify] No se encontró EVENT_ID para verificar consistencia" >&2
   exit 1
 fi
 
-./loadtests/verify-consistency.sh
+echo "[verify] Verificando consistencia SQL para EVENT_ID=$EVENT_ID"
+docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-no-oversell.sql"
+docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-ticket-issuance-consistency.sql"
+docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-expired-reservations.sql"
+
+echo "[verify] OK"

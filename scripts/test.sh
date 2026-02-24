@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Official clean-machine test entrypoint (Dockerized)
+echo "[test] Ejecutando suite reproducible dentro del contenedor api-test..."
 docker compose run --rm api-test
