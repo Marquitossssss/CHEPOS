@@ -1,0 +1,12 @@
+{
+  "name": "@articket/loadtests",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test": "echo 'usar k6 run loadtests/hot-event.js o loadtests/confirm-idempotency.js'",
+    "verify:no-oversell": "sh loadtests/verify-no-oversell.sh",
+    "verify:consistency": "sh loadtests/verify-consistency.sh",
+    "lint": "echo 'sin lint loadtests'",
+    "format": "echo 'sin format loadtests'"
+  }
+}
