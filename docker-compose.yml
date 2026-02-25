@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
     ports:
       - "5432:5432"
     volumes:
@@ -22,8 +22,8 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-articket}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-articket}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
@@ -44,13 +44,13 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-articket}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-articket}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
       QR_SECRET: ${QR_SECRET:-change_me_qr}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-change_me_sendgrid_api_key}
       SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@articket.local}
       SENDGRID_TEMPLATE_ORDER_PAID: ${SENDGRID_TEMPLATE_ORDER_PAID:-}
     depends_on:
@@ -66,8 +66,8 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-articket}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-articket}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
