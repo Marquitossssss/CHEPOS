@@ -41,6 +41,12 @@ Incluye:
 - filtros por `types`
 - visualización de `correlationId`, actor y summary server-side
 
+
+## Métricas
+- API: `GET /metrics` (`http_requests_total`, `http_request_duration_seconds`, `http_in_flight_requests`, `domain_events_total`).
+- Worker: `GET /metrics` en `:9101` (`bullmq_jobs_total`, `bullmq_job_duration_seconds`).
+- Si definís `METRICS_TOKEN`, enviar header `x-metrics-token` en ambos endpoints.
+
 ## Loadtests y consistencia
 Ver:
 - `loadtests/*.js`

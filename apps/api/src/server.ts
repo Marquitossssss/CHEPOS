@@ -5,6 +5,7 @@ import sensible from "@fastify/sensible";
 import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { Counter, Gauge, Histogram, collectDefaultMetrics, register } from "prom-client";
 import { confirmSchema, reserveSchema } from "@articket/shared/src/index";
 import { prisma } from "./lib/prisma.js";
 import { env } from "./lib/env.js";
@@ -14,9 +15,59 @@ import { emitDomainEvent } from "./lib/domainEvents.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 
 const app = Fastify({ logger: true });
+
+collectDefaultMetrics();
+
+const httpRequestsTotal = new Counter({
+  name: "http_requests_total",
+  help: "Total requests HTTP servidas por la API",
+  labelNames: ["method", "route", "status_code"]
+});
+
+const httpRequestDuration = new Histogram({
+  name: "http_request_duration_seconds",
+  help: "Duración de requests HTTP en segundos",
+  labelNames: ["method", "route"],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.3, 0.5, 1, 2, 5]
+});
+
+const httpInFlightRequests = new Gauge({
+  name: "http_in_flight_requests",
+  help: "Requests HTTP en vuelo"
+});
+
 await app.register(cors, { origin: true });
 await app.register(sensible);
 await app.register(jwt, { secret: env.jwtAccessSecret });
+
+app.decorateRequest("correlationId", "");
+app.decorateRequest("metricsStartAt", 0);
+
+app.addHook("onRequest", async (req, reply) => {
+  const incomingCorrelation = req.headers["x-correlation-id"];
+  const correlationId = typeof incomingCorrelation === "string" && incomingCorrelation.trim().length > 0
+    ? incomingCorrelation
+    : req.id;
+  req.correlationId = correlationId;
+  req.metricsStartAt = process.hrtime.bigint();
+  reply.header("x-correlation-id", correlationId);
+  httpInFlightRequests.inc();
+});
+
+app.addHook("onResponse", async (req, reply) => {
+  const route = req.routeOptions?.url ?? "unknown";
+  const method = req.method;
+  const statusCode = String(reply.statusCode);
+
+  httpRequestsTotal.inc({ method, route, status_code: statusCode });
+
+  if (req.metricsStartAt) {
+    const elapsed = Number(process.hrtime.bigint() - req.metricsStartAt) / 1_000_000_000;
+    httpRequestDuration.observe({ method, route }, elapsed);
+  }
+
+  httpInFlightRequests.dec();
+});
 
 type JwtPayload = { userId: string; email: string };
 type Role = "owner" | "admin" | "staff" | "scanner";
@@ -24,6 +75,13 @@ type Role = "owner" | "admin" | "staff" | "scanner";
 type TicketRow = { id: string; eventId: string; status: string; checkedInAt: Date | null };
 type TicketValidation = { valid: true; ticket: TicketRow } | { valid: false; reason: string; ticket?: TicketRow };
 type TicketDbLike = { ticket: { findUnique: (args: { where: { code: string }; select: { id: true; eventId: true; status: true; checkedInAt: true } }) => Promise<TicketRow | null> } };
+
+declare module "fastify" {
+  interface FastifyRequest {
+    correlationId: string;
+    metricsStartAt: bigint;
+  }
+}
 
 async function verifyAuth(req: any) {
   await req.jwtVerify();
@@ -50,6 +108,18 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
 }
 
 app.get("/health", async () => ({ ok: true }));
+
+app.get("/metrics", async (req, reply) => {
+  if (env.metricsToken) {
+    const token = req.headers["x-metrics-token"];
+    if (token !== env.metricsToken) {
+      throw app.httpErrors.unauthorized("Unauthorized metrics access");
+    }
+  }
+
+  reply.header("Content-Type", register.contentType);
+  return register.metrics();
+});
 
 app.post("/auth/register", async (req, reply) => {
   const body = z.object({ email: z.string().email(), password: z.string().min(8) }).parse(req.body);
@@ -146,7 +216,8 @@ app.get("/events/:id/ticket-types", async (req: any) => {
 
 app.post("/checkout/reserve", async (req: any) => {
   const body = reserveSchema.parse(req.body);
-  const requestId = req.id as string;
+  const correlationId = req.correlationId as string;
+  req.log.info({ correlationId, eventId: body.eventId }, "checkout reserve request");
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
 
@@ -217,7 +288,7 @@ app.post("/checkout/reserve", async (req: any) => {
 
     await emitDomainEvent({
       type: "ORDER_RESERVED",
-      correlationId: requestId,
+      correlationId: correlationId,
       actorType: "system",
       aggregateType: "order",
       aggregateId: createdOrder.id,
@@ -234,7 +305,8 @@ app.post("/checkout/reserve", async (req: any) => {
 
 app.post("/checkout/confirm", async (req: any) => {
   const body = confirmSchema.parse(req.body);
-  const requestId = req.id as string;
+  const correlationId = req.correlationId as string;
+  req.log.info({ correlationId, orderId: body.orderId }, "checkout confirm request");
 
   const order = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${body.orderId} FOR UPDATE`;
@@ -275,7 +347,7 @@ app.post("/checkout/confirm", async (req: any) => {
 
     await emitDomainEvent({
       type: "ORDER_PAID",
-      correlationId: requestId,
+      correlationId: correlationId,
       actorType: "system",
       aggregateType: "order",
       aggregateId: order.id,
@@ -304,7 +376,7 @@ app.post("/checkout/confirm", async (req: any) => {
         await tx.ticket.createMany({ data: rows });
         await emitDomainEvent({
           type: "TICKETS_ISSUED",
-          correlationId: requestId,
+          correlationId: correlationId,
           actorType: "system",
           aggregateType: "order",
           aggregateId: order.id,
@@ -324,7 +396,7 @@ app.post("/checkout/confirm", async (req: any) => {
   if (order?.status === "paid") {
     await notificationQueue.add(
       "order_paid_confirmation",
-      { type: "order_paid_confirmation", orderId: order.id },
+      { type: "order_paid_confirmation", orderId: order.id, meta: { correlationId } },
       { jobId: `order_paid_confirmation:${order.id}` }
     );
   }
@@ -381,6 +453,7 @@ app.get("/events/:eventId/activity", { preHandler: verifyAuth }, async (req: any
 app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
   const body = z.object({ code: z.string(), gate: z.string().optional(), allowOverride: z.boolean().optional() }).parse(req.body);
   const user = req.user as JwtPayload;
+  const correlationId = req.correlationId as string;
 
   return prisma.$transaction(async (tx) => {
     if (!verifyTicketCode(body.code)) {
@@ -438,7 +511,7 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
 
     await emitDomainEvent({
       type: "TICKET_CHECKED_IN",
-      correlationId: req.id,
+      correlationId: correlationId,
       actorType: "user",
       actorId: user.userId,
       aggregateType: "ticket",
@@ -463,7 +536,7 @@ app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (r
 
   await notificationQueue.add(
     "order_paid_confirmation",
-    { type: "order_paid_confirmation", orderId: order.id },
+    { type: "order_paid_confirmation", orderId: order.id, meta: { correlationId } },
     { jobId: `order_paid_confirmation:${order.id}:manual:${Date.now()}` }
   );
 
@@ -495,7 +568,7 @@ app.post("/webhooks/sendgrid", async (req: any) => {
 });
 
 app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, _req, reply) => {
-  app.log.error({ err: error }, "request failed");
+  app.log.error({ err: error, correlationId: _req.correlationId }, "request failed");
   const status = error.statusCode ?? 400;
   const title = status >= 500 ? "Internal Server Error" : "Bad Request";
   reply.status(status).send({

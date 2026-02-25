@@ -17,4 +17,7 @@ export const notificationQueue = new Queue("notifications", {
 export type OrderPaidJob = {
   type: "order_paid_confirmation";
   orderId: string;
+  meta?: {
+    correlationId?: string;
+  };
 };
