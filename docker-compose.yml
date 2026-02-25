@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
     ports:
       - "5432:5432"
     volumes:
@@ -22,14 +22,16 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
-      REDIS_URL: redis://redis:6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
       JWT_ACCESS_EXPIRES: ${JWT_ACCESS_EXPIRES:-15m}
       JWT_REFRESH_EXPIRES: ${JWT_REFRESH_EXPIRES:-7d}
-      QR_SECRET: ${QR_SECRET:-change_me_qr}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
       API_PORT: 3000
     depends_on:
       - postgres
@@ -44,20 +46,21 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
-      REDIS_URL: redis://redis:6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
-      QR_SECRET: ${QR_SECRET:-change_me_qr}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-change_me_sendgrid_api_key}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
       SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@articket.local}
       SENDGRID_TEMPLATE_ORDER_PAID: ${SENDGRID_TEMPLATE_ORDER_PAID:-}
     depends_on:
       - postgres
       - redis
     command: ["pnpm", "worker:notifications"]
-
 
   api-test:
     build:
@@ -66,12 +69,14 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-articket}?schema=public
-      REDIS_URL: redis://redis:6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
-      QR_SECRET: ${QR_SECRET:-change_me_qr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
       NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     depends_on:
       - postgres

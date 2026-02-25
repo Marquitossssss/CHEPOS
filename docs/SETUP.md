@@ -11,6 +11,27 @@ cp .env.example .env
 
 > No subir `.env` al repositorio.
 
+Completar obligatoriamente en `.env`:
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `JWT_ACCESS_SECRET`
+- `JWT_REFRESH_SECRET`
+- `QR_SECRET`
+
+Si usás SendGrid en local, completar también:
+- `SENDGRID_API_KEY`
+
+### Generación recomendada de secretos
+```bash
+openssl rand -hex 32   # JWT_ACCESS_SECRET
+openssl rand -hex 32   # JWT_REFRESH_SECRET
+openssl rand -hex 32   # QR_SECRET
+openssl rand -hex 24   # POSTGRES_PASSWORD
+```
+
+### DATABASE_URL
+Definila en `.env` usando tus valores reales de `POSTGRES_*`.
+
 ## Comandos oficiales
 ```bash
 ./scripts/start.sh
