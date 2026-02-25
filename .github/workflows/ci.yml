@@ -9,6 +9,11 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci_postgres_required_value_123456
+      JWT_ACCESS_SECRET: ci_jwt_access_secret_min_length_24_chars
+      JWT_REFRESH_SECRET: ci_jwt_refresh_secret_min_length_24_chars
+      QR_SECRET: ci_qr_secret_minimum_24_chars_long
 
     services:
       postgres:
@@ -16,7 +21,7 @@ jobs:
         env:
           POSTGRES_DB: articket
           POSTGRES_USER: articket
-          POSTGRES_PASSWORD: articket
+          POSTGRES_PASSWORD: ci_postgres_required_value_123456
         ports:
           - 5432:5432
         options: >-

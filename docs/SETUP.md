@@ -13,10 +13,9 @@ cp .env.example .env
 
 Completar obligatoriamente en `.env`:
 - `POSTGRES_PASSWORD`
-- `DATABASE_URL`
-- `JWT_ACCESS_SECRET`
-- `JWT_REFRESH_SECRET`
-- `QR_SECRET`
+- `JWT_ACCESS_SECRET` (mínimo 24 caracteres)
+- `JWT_REFRESH_SECRET` (mínimo 24 caracteres)
+- `QR_SECRET` (mínimo 24 caracteres)
 
 Si usás SendGrid en local, completar también:
 - `SENDGRID_API_KEY`
@@ -30,7 +29,7 @@ openssl rand -hex 24   # POSTGRES_PASSWORD
 ```
 
 ### DATABASE_URL
-Definila en `.env` usando tus valores reales de `POSTGRES_*`.
+Opcional. Si no la definís, el contenedor API la deriva automáticamente desde `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT` y `POSTGRES_DB`.
 
 ## Comandos oficiales
 ```bash

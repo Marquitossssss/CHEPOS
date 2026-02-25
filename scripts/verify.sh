@@ -17,9 +17,16 @@ if [[ -z "$EVENT_ID" ]]; then
   exit 1
 fi
 
+POSTGRES_HOST_COMPOSE="${POSTGRES_HOST:-postgres}"
+POSTGRES_PORT_COMPOSE="${POSTGRES_PORT:-5432}"
+POSTGRES_DB_COMPOSE="${POSTGRES_DB:-articket}"
+POSTGRES_USER_COMPOSE="${POSTGRES_USER:-articket}"
+POSTGRES_PASSWORD_COMPOSE="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}"
+DB_URL="postgresql://${POSTGRES_USER_COMPOSE}:${POSTGRES_PASSWORD_COMPOSE}@${POSTGRES_HOST_COMPOSE}:${POSTGRES_PORT_COMPOSE}/${POSTGRES_DB_COMPOSE}?schema=public"
+
 echo "[verify] Verificando consistencia SQL para EVENT_ID=$EVENT_ID"
-docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-no-oversell.sql"
-docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-ticket-issuance-consistency.sql"
-docker compose run --rm api sh -lc "psql \"\$DATABASE_URL\" -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-expired-reservations.sql"
+docker compose run --rm api sh -lc "psql '$DB_URL' -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-no-oversell.sql"
+docker compose run --rm api sh -lc "psql '$DB_URL' -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-ticket-issuance-consistency.sql"
+docker compose run --rm api sh -lc "psql '$DB_URL' -v EVENT_ID='$EVENT_ID' -v TICKET_TYPE_ID='' -f /app/loadtests/verify-expired-reservations.sql"
 
 echo "[verify] OK"
