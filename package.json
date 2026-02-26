@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "format": "pnpm -r format",
     "db:migrate": "pnpm --filter @articket/api db:migrate",
-    "db:seed": "pnpm --filter @articket/api db:seed"
+    "db:seed": "pnpm --filter @articket/api db:seed",
+    "smoke": "./scripts/runtime-smoke.sh"
   }
 }

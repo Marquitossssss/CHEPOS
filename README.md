@@ -22,6 +22,7 @@ Monorepo **TypeScript** para ticketing multi-organizador, listo para repo **priv
 ./scripts/test.sh
 ./scripts/verify.sh
 ./scripts/lint.sh
+./scripts/runtime-smoke.sh
 ```
 
 
@@ -96,3 +97,25 @@ Workflow: `.github/workflows/ci.yml`.
 - Node 18 pinneado
 - servicios: postgres + redis
 - ejecución: `./scripts/test.sh` y `./scripts/verify.sh`
+
+
+## Diagnóstico rápido (stabilización + observabilidad)
+En una máquina limpia:
+```bash
+docker compose down -v
+docker compose build --no-cache
+docker compose up -d
+curl -sSf http://localhost:3000/health
+curl -sSf http://localhost:3000/metrics >/dev/null
+curl -sSf http://localhost:9101/health
+curl -sSf http://localhost:9101/metrics >/dev/null
+docker compose logs --tail=200 api worker
+
+# anti-symlink host (debe terminar sin resultados)
+docker run --rm articket-api sh -lc "grep -R 'C:/' -n /app 2>/dev/null | head -n 20 || echo OK"
+```
+
+También podés correr todo junto:
+```bash
+./scripts/runtime-smoke.sh
+```

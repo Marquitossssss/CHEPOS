@@ -30,30 +30,8 @@ jobs:
       - name: build images
         run: docker compose build
 
-      - name: smoke up (health + metrics endpoints)
-        run: |
-          docker compose up -d postgres redis api worker
-          docker compose ps
-          for i in $(seq 1 40); do
-            API_HEALTH=$(docker compose exec -T api node -e "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && echo ok || echo fail)
-            API_METRICS=$(docker compose exec -T api node -e "fetch('http://localhost:3000/metrics').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && echo ok || echo fail)
-            WORKER_HEALTH=$(docker compose exec -T worker node -e "fetch('http://localhost:9101/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && echo ok || echo fail)
-            WORKER_METRICS=$(docker compose exec -T worker node -e "fetch('http://localhost:9101/metrics').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && echo ok || echo fail)
-            if [ "$API_HEALTH" = "ok" ] && [ "$API_METRICS" = "ok" ] && [ "$WORKER_HEALTH" = "ok" ] && [ "$WORKER_METRICS" = "ok" ]; then
-              echo "health/metrics checks OK"
-              break
-            fi
-            sleep 3
-          done
-          docker compose exec -T api node -e "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"
-          docker compose exec -T api node -e "fetch('http://localhost:3000/metrics').then(r=>process.exit(r.ok?0:1))"
-          docker compose exec -T worker node -e "fetch('http://localhost:9101/health').then(r=>process.exit(r.ok?0:1))"
-          docker compose exec -T worker node -e "fetch('http://localhost:9101/metrics').then(r=>process.exit(r.ok?0:1))"
-
-      - name: anti-symlink host path check
-        run: |
-          docker compose exec -T api sh -lc "ls -la /app/apps/api/node_modules/prisma || true"
-          docker compose exec -T api sh -lc "grep -R 'C:/' -n /app/apps/api/node_modules 2>/dev/null | head"
+      - name: smoke up (health + metrics + anti-symlink)
+        run: ./scripts/runtime-smoke.sh
 
       - name: run tests
         run: ./scripts/test.sh
