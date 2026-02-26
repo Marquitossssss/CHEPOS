@@ -35,7 +35,43 @@ async function main() {
     }
   });
 
-  await prisma.ticketType.create({ data: { eventId: event.id, name: "General", priceCents: 10000, currency: "ARS", quota: 500 } });
+  const ticketType = await prisma.ticketType.create({ data: { eventId: event.id, name: "General", priceCents: 10000, currency: "ARS", quota: 500 } });
+
+  const order = await prisma.order.upsert({
+    where: { orderNumber: "DEMO-ORDER-0001" },
+    update: { status: "paid", totalCents: 10000, subtotalCents: 10000 },
+    create: {
+      organizerId: organizer.id,
+      eventId: event.id,
+      userId: user.id,
+      orderNumber: "DEMO-ORDER-0001",
+      customerEmail: user.email,
+      status: "paid",
+      subtotalCents: 10000,
+      totalCents: 10000,
+      items: {
+        create: {
+          ticketTypeId: ticketType.id,
+          quantity: 1,
+          unitPriceCents: 10000,
+          totalCents: 10000
+        }
+      }
+    }
+  });
+
+  await prisma.ticket.upsert({
+    where: { code: "DEMO-TICKET-0001" },
+    update: { status: "issued", eventId: event.id, orderId: order.id, ticketTypeId: ticketType.id },
+    create: {
+      orderId: order.id,
+      ticketTypeId: ticketType.id,
+      eventId: event.id,
+      status: "issued",
+      code: "DEMO-TICKET-0001",
+      qrPayload: "demo-qr-payload"
+    }
+  });
 }
 
 main().finally(async () => prisma.$disconnect());

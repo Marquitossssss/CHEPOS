@@ -20,6 +20,11 @@ FROM builder AS test
 WORKDIR /app/apps/api
 CMD ["pnpm", "test"]
 
+
+FROM builder AS tools
+WORKDIR /app
+CMD ["sh"]
+
 FROM node:20-alpine AS runtime
 WORKDIR /app/apps/api
 ENV NODE_ENV=production
