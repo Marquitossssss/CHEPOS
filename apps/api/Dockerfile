@@ -12,8 +12,8 @@ RUN pnpm install --no-frozen-lockfile
 COPY . .
 
 RUN pnpm --filter @articket/shared build
-RUN pnpm --filter @articket/api build
 RUN pnpm --filter @articket/api exec prisma generate
+RUN pnpm --filter @articket/api build
 RUN pnpm deploy --filter @articket/api --prod /opt/api
 
 FROM builder AS test

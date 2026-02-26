@@ -1,8 +1,8 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { Redis } from "ioredis";
 import { env } from "../../lib/env.js";
 
-export const notificationConnection = new IORedis(env.redisUrl, { maxRetriesPerRequest: null });
+export const notificationConnection = new Redis(env.redisUrl, { maxRetriesPerRequest: null });
 
 export const notificationQueue = new Queue("notifications", {
   connection: notificationConnection,

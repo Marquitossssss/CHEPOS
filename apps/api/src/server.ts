@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import sensible from "@fastify/sensible";
@@ -41,7 +41,7 @@ await app.register(sensible);
 await app.register(jwt, { secret: env.jwtAccessSecret });
 
 app.decorateRequest("correlationId", "");
-app.decorateRequest("metricsStartAt", 0);
+app.decorateRequest("metricsStartAt", 0n);
 
 app.addHook("onRequest", async (req, reply) => {
   const incomingCorrelation = req.headers["x-correlation-id"];
@@ -61,7 +61,7 @@ app.addHook("onResponse", async (req, reply) => {
 
   httpRequestsTotal.inc({ method, route, status_code: statusCode });
 
-  if (req.metricsStartAt) {
+  if (req.metricsStartAt !== 0n) {
     const elapsed = Number(process.hrtime.bigint() - req.metricsStartAt) / 1_000_000_000;
     httpRequestDuration.observe({ method, route }, elapsed);
   }
@@ -83,7 +83,7 @@ declare module "fastify" {
   }
 }
 
-async function verifyAuth(req: any) {
+async function verifyAuth(req: FastifyRequest) {
   await req.jwtVerify();
 }
 
@@ -136,15 +136,14 @@ app.post("/auth/login", async (req) => {
   }
   const accessToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, { expiresIn: "15m" });
   const refreshToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, {
-    expiresIn: "7d",
-    secret: env.jwtRefreshSecret
+    expiresIn: "7d"
   });
   return { accessToken, refreshToken };
 });
 
 app.post("/auth/refresh", async (req) => {
   const body = z.object({ refreshToken: z.string() }).parse(req.body);
-  const payload = await app.jwt.verify<JwtPayload>(body.refreshToken, { secret: env.jwtRefreshSecret });
+  const payload = await app.jwt.verify<JwtPayload>(body.refreshToken);
   const accessToken = app.jwt.sign({ userId: payload.userId, email: payload.email }, { expiresIn: "15m" });
   return { accessToken };
 });
@@ -529,8 +528,9 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
 });
 
 
-app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req: any) => {
+app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req: FastifyRequest<{ Params: { id: string } }>) => {
   const user = req.user as JwtPayload;
+  const correlationId = req.correlationId;
   const order = await prisma.order.findUniqueOrThrow({ where: { id: req.params.id }, include: { event: true } });
   await requireMembership(user.userId, order.organizerId, ["owner", "admin", "staff"]);
 
@@ -567,8 +567,8 @@ app.post("/webhooks/sendgrid", async (req: any) => {
   return { ok: true };
 });
 
-app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, _req, reply) => {
-  app.log.error({ err: error, correlationId: _req.correlationId }, "request failed");
+app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, req: FastifyRequest, reply: FastifyReply) => {
+  app.log.error({ err: error, correlationId: req.correlationId }, "request failed");
   const status = error.statusCode ?? 400;
   const title = status >= 500 ? "Internal Server Error" : "Bad Request";
   reply.status(status).send({

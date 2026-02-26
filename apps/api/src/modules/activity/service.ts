@@ -1,4 +1,4 @@
-import { OrganizerRole, PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 type CursorData = { occurredAt: string; id: string };
 
@@ -39,8 +39,8 @@ function encodeCursor(occurredAt: Date, id: string) {
   return Buffer.from(`${occurredAt.toISOString()}|${id}`, "utf8").toString("base64url");
 }
 
-const privilegedRoles: OrganizerRole[] = ["owner", "admin"];
-const allowedRoles: OrganizerRole[] = ["owner", "admin", "staff", "scanner"];
+const privilegedRoles: Prisma.$Enums.OrganizerRole[] = ["owner", "admin"];
+const allowedRoles: Prisma.$Enums.OrganizerRole[] = ["owner", "admin", "staff", "scanner"];
 
 function summarize(type: string, payload: Record<string, unknown>) {
   if (type === "ORDER_RESERVED") return "Orden reservada";
@@ -68,7 +68,7 @@ export async function fetchEventActivity(prisma: PrismaClient, query: ActivityQu
     throw err;
   }
 
-  const where: any = {
+  const where: Prisma.DomainEventWhereInput = {
     eventId: query.eventId,
     ...(query.types?.length ? { type: { in: query.types } } : {})
   };
