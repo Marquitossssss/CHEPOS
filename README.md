@@ -43,7 +43,8 @@ cp .env.example .env
 Esto ejecuta:
 - API en `node dist/server.js`
 - Worker en `node dist/workers/notificationsWorker.js`
-- `prisma migrate deploy` al boot
+- `pnpm exec prisma migrate deploy` al boot
+- seed **solo opt-in** (`SEED_ON_START=true`)
 - healthchecks Compose para postgres/redis/api/worker
 
 ## Setup rápido

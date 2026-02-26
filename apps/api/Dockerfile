@@ -13,7 +13,7 @@ COPY . .
 
 RUN pnpm --filter @articket/shared build
 RUN pnpm --filter @articket/api build
-RUN pnpm --filter @articket/api prisma generate
+RUN pnpm --filter @articket/api exec prisma generate
 RUN pnpm deploy --filter @articket/api --prod /opt/api
 
 FROM builder AS test
@@ -23,6 +23,8 @@ CMD ["pnpm", "test"]
 FROM node:20-alpine AS runtime
 WORKDIR /app/apps/api
 ENV NODE_ENV=production
+
+RUN npm install -g pnpm@9.12.0
 
 COPY --from=builder /opt/api ./
 COPY --from=builder /app/apps/api/entrypoint.sh ./entrypoint.sh

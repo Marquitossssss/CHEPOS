@@ -17,8 +17,8 @@
   },
   "dependencies": {
     "@articket/shared": "workspace:*",
-    "@fastify/cors": "10.0.1",
-    "@fastify/jwt": "9.0.1",
+    "@fastify/cors": "8.5.0",
+    "@fastify/jwt": "8.0.1",
     "@fastify/sensible": "5.6.0",
     "@prisma/client": "5.20.0",
     "bcryptjs": "2.4.3",

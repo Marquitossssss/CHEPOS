@@ -44,6 +44,7 @@ services:
       JWT_REFRESH_EXPIRES: ${JWT_REFRESH_EXPIRES:-7d}
       QR_SECRET: ${QR_SECRET:?QR_SECRET required}
       API_PORT: 3000
+      SEED_ON_START: ${SEED_ON_START:-false}
     depends_on:
       - postgres
       - redis
