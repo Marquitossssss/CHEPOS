@@ -12,29 +12,30 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "reservation:cleaner": "tsx src/jobs/releaseExpiredReservations.ts",
-    "worker:notifications": "tsx src/workers/notificationsWorker.ts"
+    "worker:notifications": "tsx src/workers/notificationsWorker.ts",
+    "start:worker": "node dist/workers/notificationsWorker.js"
   },
   "dependencies": {
     "@articket/shared": "workspace:*",
-    "@fastify/cors": "^10.0.1",
-    "@fastify/jwt": "^9.0.1",
-    "@fastify/sensible": "^5.6.0",
-    "@prisma/client": "^5.20.0",
-    "bcryptjs": "^2.4.3",
-    "bullmq": "^5.12.11",
-    "dotenv": "^16.4.5",
-    "fastify": "^4.28.1",
-    "ioredis": "^5.4.1",
-    "nanoid": "^5.0.8",
-    "pino": "^9.4.0",
-    "zod": "^3.23.8",
-    "@sendgrid/mail": "^8.1.4",
-    "prom-client": "^15.1.3"
+    "@fastify/cors": "10.0.1",
+    "@fastify/jwt": "9.0.1",
+    "@fastify/sensible": "5.6.0",
+    "@prisma/client": "5.20.0",
+    "bcryptjs": "2.4.3",
+    "bullmq": "5.12.11",
+    "dotenv": "16.4.5",
+    "fastify": "4.28.1",
+    "ioredis": "5.4.1",
+    "nanoid": "5.0.8",
+    "pino": "9.4.0",
+    "zod": "3.23.8",
+    "@sendgrid/mail": "8.1.4",
+    "prom-client": "15.1.3",
+    "prisma": "5.20.0"
   },
   "devDependencies": {
-    "prisma": "^5.20.0",
-    "tsx": "^4.19.1",
-    "typescript": "^5.6.2",
-    "vitest": "^2.1.1"
+    "tsx": "4.19.1",
+    "typescript": "5.6.2",
+    "vitest": "2.1.1"
   }
 }

@@ -29,6 +29,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: runtime
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
@@ -58,6 +59,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: runtime
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
@@ -89,6 +91,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: test
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}

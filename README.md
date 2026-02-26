@@ -24,6 +24,28 @@ Monorepo **TypeScript** para ticketing multi-organizador, listo para repo **priv
 ./scripts/lint.sh
 ```
 
+
+## Runtime: desarrollo vs producción
+- **Desarrollo local**: podés usar `pnpm dev` fuera de Docker para iterar rápido.
+- **Producción en Docker (recomendado)**:
+  - la imagen API/Worker compila TypeScript en stage `builder` (`tsc`),
+  - runtime ejecuta **solo Node** (`node dist/server.js` y `node dist/workers/notificationsWorker.js`),
+  - sin `tsx watch`,
+  - sin `pnpm` en ejecución,
+  - con `node_modules` de producción (via `pnpm deploy --prod`).
+
+### Arranque reproducible (prod-like)
+```bash
+cp .env.example .env
+./scripts/start.sh
+```
+
+Esto ejecuta:
+- API en `node dist/server.js`
+- Worker en `node dist/workers/notificationsWorker.js`
+- `prisma migrate deploy` al boot
+- healthchecks Compose para postgres/redis/api/worker
+
 ## Setup rápido
 ```bash
 cp .env.example .env

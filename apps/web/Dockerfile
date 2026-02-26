@@ -8,7 +8,7 @@ RUN npm install -g pnpm@9.12.0
 COPY . .
 
 # Instala dependencias dentro del contenedor usando lockfile versionado.
-RUN pnpm install --filter @articket/web... --frozen-lockfile --prefer-offline || pnpm install --filter @articket/web... --no-frozen-lockfile
+RUN pnpm install --filter @articket/web... --no-frozen-lockfile
 
 WORKDIR /app/apps/web
 EXPOSE 5173

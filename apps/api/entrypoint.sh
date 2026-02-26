@@ -51,19 +51,28 @@ until node -e "const net=require('net');const s=net.connect(${POSTGRES_PORT},'${
   sleep 2
 done
 
-pnpm prisma generate
+if [ -x "./node_modules/.bin/prisma" ]; then
+  ./node_modules/.bin/prisma generate
+else
+  echo "[entrypoint] prisma CLI no encontrada" >&2
+  exit 1
+fi
 
 case "$MODE" in
   api)
-    pnpm prisma migrate deploy
-    pnpm db:seed || true
-    pnpm dev
+    ./node_modules/.bin/prisma migrate deploy
+    node dist/server.js
     ;;
   worker)
-    pnpm worker:notifications
+    ./node_modules/.bin/prisma migrate deploy
+    node dist/workers/notificationsWorker.js
     ;;
   test)
-    pnpm test
+    if command -v pnpm >/dev/null 2>&1; then
+      pnpm test
+    else
+      node ./node_modules/vitest/vitest.mjs run
+    fi
     ;;
   *)
     echo "[entrypoint] Modo inválido: $MODE" >&2
