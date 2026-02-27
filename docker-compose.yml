@@ -31,7 +31,7 @@ services:
       dockerfile: apps/api/Dockerfile
       target: runtime
     environment:
-      DATABASE_URL: postgresql://articket:articket@postgres:5432/articket?schema=public
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
@@ -63,7 +63,7 @@ services:
       dockerfile: apps/api/Dockerfile
       target: runtime
     environment:
-      DATABASE_URL: postgresql://articket:articket@postgres:5432/articket?schema=public
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
@@ -118,7 +118,7 @@ services:
       dockerfile: apps/api/Dockerfile
       target: tools
     environment:
-      DATABASE_URL: postgresql://articket:articket@postgres:5432/articket?schema=public
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
       POSTGRES_DB: ${POSTGRES_DB:-articket}
       POSTGRES_USER: ${POSTGRES_USER:-articket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
@@ -130,7 +130,7 @@ services:
       [
         "sh",
         "-lc",
-        "pnpm --filter @articket/api exec prisma migrate deploy && pnpm --filter @articket/api exec prisma db seed"
+        "pnpm --filter @articket/api exec prisma migrate deploy && pnpm --filter @articket/api db:seed"
       ]
 
   web:

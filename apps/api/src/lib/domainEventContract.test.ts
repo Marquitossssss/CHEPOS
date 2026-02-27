@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("domain event contract in critical flows", () => {
-  const read = (rel: string) => fs.readFileSync(path.resolve(process.cwd(), rel), "utf8");
+  const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+  const read = (rel: string) => fs.readFileSync(path.resolve(repoRoot, rel), "utf8");
 
   it("checkout/checkin flows emit required events", () => {
     const server = read("apps/api/src/server.ts");

@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { Counter, Gauge, Histogram, collectDefaultMetrics, register } from "prom-client";
-import { confirmSchema, reserveSchema } from "@articket/shared/src/index";
+import { confirmSchema, reserveSchema } from "@articket/shared";
 import { prisma } from "./lib/prisma.js";
 import { env } from "./lib/env.js";
 import { generateTicketCode, verifyTicketCode } from "./lib/qr.js";
@@ -268,7 +268,7 @@ app.post("/checkout/reserve", async (req: any) => {
         taxCents,
         totalCents,
         items: {
-          create: body.items.map((item) => {
+          create: body.items.map((item: any) => {
             const tt = ticketTypes.find((t) => t.id === item.ticketTypeId)!;
             return {
               ticketTypeId: item.ticketTypeId,
@@ -279,7 +279,7 @@ app.post("/checkout/reserve", async (req: any) => {
           })
         },
         reservations: {
-          create: body.items.map((item) => ({ ticketTypeId: item.ticketTypeId, quantity: item.quantity, expiresAt }))
+          create: body.items.map((item: any) => ({ ticketTypeId: item.ticketTypeId, quantity: item.quantity, expiresAt }))
         }
       },
       include: { items: true }
@@ -467,7 +467,7 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
       return { ok: false, reason: "Ticket inexistente" };
     }
 
-    const validation = await validateTicketRecord(tx as TicketDbLike, body.code);
+    const validation = await validateTicketRecord(tx as unknown as TicketDbLike, body.code);
     if (!validation.valid && !validation.ticket) {
       return { ok: false, reason: validation.reason };
     }
@@ -528,7 +528,7 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
 });
 
 
-app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req: FastifyRequest<{ Params: { id: string } }>) => {
+app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req: any) => {
   const user = req.user as JwtPayload;
   const correlationId = req.correlationId;
   const order = await prisma.order.findUniqueOrThrow({ where: { id: req.params.id }, include: { event: true } });

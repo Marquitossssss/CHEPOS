@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import pino from "pino";
+import { pino } from "pino";
 import { Counter, Histogram, collectDefaultMetrics, register } from "prom-client";
 import { Job, Worker } from "bullmq";
 import { prisma } from "../lib/prisma.js";
@@ -8,7 +8,7 @@ import { SendGridProvider } from "../modules/notifications/sendgridProvider.js";
 import { env } from "../lib/env.js";
 import { emitDomainEvent } from "../lib/domainEvents.js";
 
-const logger = pino({ service: "worker", queue: "notifications" });
+const logger = pino().child({ service: "worker", queue: "notifications" });
 const provider = new SendGridProvider();
 
 collectDefaultMetrics();

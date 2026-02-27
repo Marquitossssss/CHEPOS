@@ -1,6 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+RUN apk add --no-cache openssl
 RUN npm install -g pnpm@9.12.0
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -29,6 +30,7 @@ FROM node:20-alpine AS runtime
 WORKDIR /app/apps/api
 ENV NODE_ENV=production
 
+RUN apk add --no-cache openssl
 RUN npm install -g pnpm@9.12.0
 
 COPY --from=builder /opt/api ./

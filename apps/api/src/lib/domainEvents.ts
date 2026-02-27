@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient, type DomainActorType, type DomainAggregateType } from "@prisma/client";
 import { Counter, register } from "prom-client";
 
 export const DOMAIN_EVENT_VERSION = 1;
@@ -18,9 +18,9 @@ type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 type DomainEventInput = {
   type: DomainEventType;
   correlationId: string;
-  actorType: Prisma.$Enums.DomainActorType;
+  actorType: DomainActorType;
   actorId?: string | null;
-  aggregateType: Prisma.$Enums.DomainAggregateType;
+  aggregateType: DomainAggregateType;
   aggregateId: string;
   context: Record<string, unknown>;
   payload: Record<string, unknown>;
@@ -61,8 +61,8 @@ export async function emitDomainEvent(input: DomainEventInput, db: DomainEventDb
         orderId: input.orderId ?? null,
         ticketId: input.ticketId ?? null,
         organizerId: input.organizerId ?? null,
-        context: input.context,
-        payload: input.payload
+        context: input.context as Prisma.InputJsonValue,
+        payload: input.payload as Prisma.InputJsonValue
       }
     });
     domainEventsTotal.inc({ type: input.type });
