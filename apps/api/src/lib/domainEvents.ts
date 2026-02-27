@@ -18,9 +18,9 @@ type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 type DomainEventInput = {
   type: DomainEventType;
   correlationId: string;
-  actorType: Prisma.DomainActorType;
+  actorType: Prisma.$Enums.DomainActorType;
   actorId?: string | null;
-  aggregateType: Prisma.DomainAggregateType;
+  aggregateType: Prisma.$Enums.DomainAggregateType;
   aggregateId: string;
   context: Record<string, unknown>;
   payload: Record<string, unknown>;

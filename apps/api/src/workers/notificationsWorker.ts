@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import pino from "pino";
 import { Counter, Histogram, collectDefaultMetrics, register } from "prom-client";
-import { Worker } from "bullmq";
+import { Job, Worker } from "bullmq";
 import { prisma } from "../lib/prisma.js";
 import { notificationConnection } from "../modules/notifications/queue.js";
 import { SendGridProvider } from "../modules/notifications/sendgridProvider.js";
@@ -28,7 +28,7 @@ const bullmqJobDuration = new Histogram({
 
 const worker = new Worker(
   "notifications",
-  async (job) => {
+  async (job: Job) => {
     const startedAt = process.hrtime.bigint();
     const payload = job.data as {
       type: "order_paid_confirmation";
@@ -97,7 +97,7 @@ const worker = new Worker(
   { connection: notificationConnection }
 );
 
-worker.on("completed", (job) => {
+worker.on("completed", (job: Job) => {
   const payload = (job.data ?? {}) as { meta?: { correlationId?: string } };
   bullmqJobsTotal.inc({ queue: "notifications", job_name: job.name, status: "completed" });
   logger.info({
@@ -108,7 +108,7 @@ worker.on("completed", (job) => {
   }, "notification job completed");
 });
 
-worker.on("failed", (job, err) => {
+worker.on("failed", (job: Job | undefined, err: Error) => {
   const payload = (job?.data ?? {}) as { meta?: { correlationId?: string } };
   bullmqJobsTotal.inc({ queue: "notifications", job_name: job?.name ?? "unknown", status: "failed" });
   logger.error({
@@ -120,7 +120,7 @@ worker.on("failed", (job, err) => {
   }, "notification job failed");
 });
 
-const metricsServer = createServer(async (req, res) => {
+const metricsServer = createServer(async (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
   if (!req.url) {
     res.statusCode = 404;
     res.end("Not found");
