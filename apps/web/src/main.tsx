@@ -1,19 +1,36 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Link, Route, Routes, useNavigate } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./api/client";
 import { EventActivityPage } from "./pages/EventActivityPage";
+import { OpsLatePaymentsPage } from "./pages/OpsLatePaymentsPage";
 
 const qc = new QueryClient();
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  if (!localStorage.getItem("token")) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
 
 function Login() {
   const navigate = useNavigate();
   const mutation = useMutation({
     mutationFn: (payload: { email: string; password: string }) => api<{ accessToken: string }>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
-    onSuccess: (data) => { localStorage.setItem("token", data.accessToken); navigate("/dashboard"); }
+    onSuccess: (data) => {
+      localStorage.setItem("token", data.accessToken);
+      navigate("/dashboard");
+    }
   });
-  return <div><h2>Login</h2><button onClick={() => mutation.mutate({ email: "owner@articket.local", password: "Password123!" })}>Ingresar demo</button></div>;
+
+  return (
+    <div>
+      <h2>Login</h2>
+      <button onClick={() => mutation.mutate({ email: "owner@articket.local", password: "Password123!" })}>Ingresar demo</button>
+    </div>
+  );
 }
 
 function Dashboard() {
@@ -61,12 +78,15 @@ function Checkin() {
 function App() {
   return (
     <div>
-      <nav><Link to="/">Login</Link> | <Link to="/dashboard">Dashboard</Link> | <Link to="/buy">Compra</Link> | <Link to="/checkin">Check-in</Link></nav>
+      <nav>
+        <Link to="/">Login</Link> | <Link to="/dashboard">Dashboard</Link> | <Link to="/ops/late-payments">Ops Late Payments</Link> | <Link to="/buy">Compra</Link> | <Link to="/checkin">Check-in</Link>
+      </nav>
       <Routes>
         <Route path="/" element={<Login />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/dashboard/events/:eventId/activity" element={<EventActivityPage />} />
-        <Route path="/events/new" element={<CreateEvent />} />
+        <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+        <Route path="/dashboard/events/:eventId/activity" element={<RequireAuth><EventActivityPage /></RequireAuth>} />
+        <Route path="/ops/late-payments" element={<RequireAuth><OpsLatePaymentsPage /></RequireAuth>} />
+        <Route path="/events/new" element={<RequireAuth><CreateEvent /></RequireAuth>} />
         <Route path="/buy" element={<PublicBuy />} />
         <Route path="/checkin" element={<Checkin />} />
       </Routes>
