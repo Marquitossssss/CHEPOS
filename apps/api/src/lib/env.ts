@@ -22,4 +22,5 @@ export const env = {
   sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
   sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "noreply@articket.local",
   sendgridTemplateOrderPaid: process.env.SENDGRID_TEMPLATE_ORDER_PAID ?? "",
+  paymentsWebhookSecret: process.env.PAYMENTS_WEBHOOK_SECRET ?? ""
 };

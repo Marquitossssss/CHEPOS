@@ -13,7 +13,7 @@ import { generateTicketCode, verifyTicketCode } from "./lib/qr.js";
 import { notificationQueue } from "./modules/notifications/queue.js";
 import { emitDomainEvent } from "./lib/domainEvents.js";
 import { DomainEventName } from "./domain/events.js";
-import { latePaymentCasesTotal, manualOverrideEntriesTotal } from "./observability/metrics.js";
+import { latePaymentCasesPending, latePaymentCasesTotal, manualOverrideEntriesTotal } from "./observability/metrics.js";
 import { ensureNotReplay } from "./modules/payments/webhook-idempotency.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 
@@ -62,6 +62,10 @@ const checkinScanTotal = new Counter({
   help: "Total de escaneos de check-in",
   labelNames: ["status"]
 });
+
+const webhookRateWindowMs = 60_000;
+const webhookRateLimitPerWindow = 120;
+const webhookHits = new Map<string, { count: number; windowStartedAt: number }>();
 
 await app.register(cors, { origin: true });
 await app.register(sensible);
@@ -120,6 +124,40 @@ async function requireMembership(userId: string, organizerId: string, roles: Rol
     throw app.httpErrors.forbidden("Sin permisos para este organizador");
   }
   return membership;
+}
+
+function assertWebhookRateLimit(provider: string, remoteAddress: string | undefined) {
+  const ip = remoteAddress ?? "unknown";
+  const key = `${provider}:${ip}`;
+  const now = Date.now();
+  const existing = webhookHits.get(key);
+
+  if (!existing || now - existing.windowStartedAt >= webhookRateWindowMs) {
+    webhookHits.set(key, { count: 1, windowStartedAt: now });
+    return;
+  }
+
+  if (existing.count >= webhookRateLimitPerWindow) {
+    throw app.httpErrors.tooManyRequests("Webhook rate limit exceeded");
+  }
+
+  existing.count += 1;
+  webhookHits.set(key, existing);
+}
+
+async function syncLatePaymentPendingGauge(provider?: string) {
+  const grouped = await prisma.latePaymentCase.groupBy({
+    by: ["provider"],
+    where: {
+      status: "PENDING",
+      ...(provider ? { provider } : {})
+    },
+    _count: { _all: true }
+  });
+
+  for (const row of grouped) {
+    latePaymentCasesPending.set({ provider: row.provider }, row._count._all);
+  }
 }
 
 async function validateTicketRecord(db: TicketDbLike, code: string): Promise<TicketValidation> {
@@ -610,6 +648,120 @@ app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (r
   return { ok: true };
 });
 
+app.get("/late-payment-cases", { preHandler: verifyAuth }, async (req: any) => {
+  const user = req.user as JwtPayload;
+  const query = z
+    .object({
+      organizerId: z.string().uuid(),
+      provider: z.string().optional(),
+      orderId: z.string().uuid().optional(),
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional(),
+      status: z.enum(["PENDING", "ACCEPTED", "REJECTED", "REFUND_REQUESTED", "REFUNDED"]).default("PENDING"),
+      limit: z.coerce.number().int().positive().max(200).default(50)
+    })
+    .parse(req.query ?? {});
+
+  await requireMembership(user.userId, query.organizerId, ["owner", "admin", "staff"]);
+
+  return prisma.latePaymentCase.findMany({
+    where: {
+      status: query.status,
+      ...(query.provider ? { provider: query.provider.toLowerCase() } : {}),
+      ...(query.orderId ? { orderId: query.orderId } : {}),
+      ...(query.from || query.to
+        ? {
+            detectedAt: {
+              ...(query.from ? { gte: new Date(query.from) } : {}),
+              ...(query.to ? { lte: new Date(query.to) } : {})
+            }
+          }
+        : {}),
+      order: { organizerId: query.organizerId }
+    },
+    orderBy: { detectedAt: "desc" },
+    take: query.limit
+  });
+});
+
+app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (req: any) => {
+  const user = req.user as JwtPayload;
+  const params = z.object({ id: z.string().uuid() }).parse(req.params);
+  const body = z
+    .object({
+      action: z.enum(["ACCEPT", "REJECT", "REFUND_REQUESTED", "REFUNDED"]),
+      resolutionNotes: z.string().max(2000).optional()
+    })
+    .parse(req.body ?? {});
+
+  const lateCase = await prisma.latePaymentCase.findUnique({
+    where: { id: params.id },
+    include: { order: { select: { id: true, organizerId: true, eventId: true } } }
+  });
+
+  if (!lateCase) {
+    throw app.httpErrors.notFound("LatePaymentCase no encontrado");
+  }
+
+  await requireMembership(user.userId, lateCase.order.organizerId, ["owner", "admin", "staff"]);
+
+  if (lateCase.status !== "PENDING") {
+    throw app.httpErrors.conflict("LatePaymentCase ya resuelto");
+  }
+
+  const statusByAction = {
+    ACCEPT: "ACCEPTED",
+    REJECT: "REJECTED",
+    REFUND_REQUESTED: "REFUND_REQUESTED",
+    REFUNDED: "REFUNDED"
+  } as const;
+
+  const nextStatus = statusByAction[body.action];
+  const resolvedAt = new Date();
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const resolved = await tx.latePaymentCase.update({
+      where: { id: lateCase.id },
+      data: {
+        status: nextStatus,
+        resolutionNotes: body.resolutionNotes ?? null,
+        resolvedAt,
+        resolvedBy: user.userId
+      }
+    });
+
+    await tx.order.update({
+      where: { id: lateCase.order.id },
+      data: { latePaymentReviewRequired: false }
+    });
+
+    await emitDomainEvent({
+      type: DomainEventName.LATE_PAYMENT_CASE_RESOLVED,
+      correlationId: req.correlationId,
+      actorType: "user",
+      actorId: user.userId,
+      aggregateType: "order",
+      aggregateId: lateCase.order.id,
+      organizerId: lateCase.order.organizerId,
+      eventId: lateCase.order.eventId,
+      orderId: lateCase.order.id,
+      context: { source: "late-payment-cases.resolve" },
+      payload: {
+        latePaymentCaseId: lateCase.id,
+        action: body.action,
+        status: nextStatus,
+        resolutionNotes: body.resolutionNotes ?? null
+      }
+    }, tx);
+
+    return resolved;
+  });
+
+  await syncLatePaymentPendingGauge(updated.provider);
+
+  return updated;
+});
+
 app.post("/webhooks/payments/:provider", async (req: any) => {
   const params = z.object({ provider: z.string().min(1) }).parse(req.params);
   const body = z
@@ -630,9 +782,20 @@ app.post("/webhooks/payments/:provider", async (req: any) => {
   const provider = params.provider.toLowerCase();
   const externalEventId = body.externalEventId ?? body.eventId ?? (body.id ? String(body.id) : undefined);
 
+  assertWebhookRateLimit(provider, req.ip);
+
+  const signature = req.headers["x-webhook-signature"];
+  if (env.paymentsWebhookSecret) {
+    if (typeof signature !== "string" || signature !== env.paymentsWebhookSecret) {
+      throw app.httpErrors.unauthorized("invalid webhook signature");
+    }
+  }
+
   if (!externalEventId) {
     throw app.httpErrors.badRequest("externalEventId requerido");
   }
+
+  req.log.info({ correlationId: req.correlationId, provider, externalEventId }, "payments webhook received");
 
   const freshEvent = await ensureNotReplay(provider, externalEventId);
   if (!freshEvent) {
@@ -764,6 +927,7 @@ app.post("/webhooks/payments/:provider", async (req: any) => {
     });
 
     latePaymentCasesTotal.inc({ provider, reason: "inventory_released_after_expire" });
+    await syncLatePaymentPendingGauge(provider);
 
     return {
       ok: true,
