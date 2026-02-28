@@ -26,11 +26,18 @@ Mapea ADR -> módulos de código -> endpoints -> eventos de dominio -> métricas
   - `payment.confirmed`
   - `order.paid`
   - `late_payment_review.created`
+  - `LATE_PAYMENT_DETECTED`
+  - `LATE_PAYMENT_CASE_CREATED`
+  - `LATE_PAYMENT_CASE_RESOLVED`
 - Metrics:
   - `payment_pending_age_seconds`
   - `payment_provider_errors_total`
   - `webhook_dedup_hits_total`
   - `tickets_issued_without_paid_total`
+  - `late_payment_cases_total`
+  - `late_payment_cases_pending`
+  - `webhook_replays_total`
+  - `webhook_signature_invalid_total`
 - Affected modules (target):
   - `apps/api/src/modules/payments/*`
   - `apps/api/src/modules/orders/*`

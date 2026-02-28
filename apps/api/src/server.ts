@@ -22,6 +22,7 @@ import {
   webhookSignatureInvalidTotal
 } from "./observability/metrics.js";
 import { ensureNotReplay } from "./modules/payments/webhook-idempotency.js";
+import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 
 const app = Fastify({ logger: true });
@@ -70,17 +71,25 @@ const checkinScanTotal = new Counter({
   labelNames: ["status"]
 });
 
-const webhookRateWindowMs = 60_000;
 const webhookRateLimitPerWindow = 120;
-// TODO(phase-2.3): mover a Redis para soporte multi-instancia.
-const webhookHits = new Map<string, { count: number; windowStartedAt: number }>();
 
 await app.register(cors, { origin: true });
 await app.register(sensible);
 await app.register(jwt, { secret: env.jwtAccessSecret });
 
+app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
+  const raw = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  req.rawBody = raw;
+  try {
+    done(null, JSON.parse(raw.toString("utf8")));
+  } catch (error) {
+    done(error as Error, undefined);
+  }
+});
+
 app.decorateRequest("correlationId", "");
 app.decorateRequest("metricsStartAt", 0n);
+app.decorateRequest("rawBody", undefined);
 
 app.addHook("onRequest", async (req, reply) => {
   const incomingCorrelation = req.headers["x-correlation-id"];
@@ -119,6 +128,7 @@ declare module "fastify" {
   interface FastifyRequest {
     correlationId: string;
     metricsStartAt: bigint;
+    rawBody?: Buffer;
   }
 }
 
@@ -132,25 +142,6 @@ async function requireMembership(userId: string, organizerId: string, roles: Rol
     throw app.httpErrors.forbidden("Sin permisos para este organizador");
   }
   return membership;
-}
-
-function assertWebhookRateLimit(provider: string, remoteAddress: string | undefined) {
-  const ip = remoteAddress ?? "unknown";
-  const key = `${provider}:${ip}`;
-  const now = Date.now();
-  const existing = webhookHits.get(key);
-
-  if (!existing || now - existing.windowStartedAt >= webhookRateWindowMs) {
-    webhookHits.set(key, { count: 1, windowStartedAt: now });
-    return;
-  }
-
-  if (existing.count >= webhookRateLimitPerWindow) {
-    throw app.httpErrors.tooManyRequests("Webhook rate limit exceeded");
-  }
-
-  existing.count += 1;
-  webhookHits.set(key, existing);
 }
 
 async function syncLatePaymentPendingGauge(provider?: string) {
@@ -817,17 +808,52 @@ app.post("/webhooks/payments/:provider", async (req: any) => {
   const provider = params.provider.toLowerCase();
   const externalEventId = body.externalEventId ?? body.eventId ?? (body.id ? String(body.id) : undefined);
 
-  assertWebhookRateLimit(provider, req.ip);
+  try {
+    await assertWebhookRateLimitShared({
+      provider,
+      ip: req.ip ?? "unknown",
+      limitPerWindow: webhookRateLimitPerWindow,
+      windowSeconds: 60
+    });
+  } catch (error: any) {
+    if (error?.code === "WEBHOOK_RATE_LIMIT") {
+      throw app.httpErrors.tooManyRequests("Webhook rate limit exceeded");
+    }
+    throw error;
+  }
 
   const signature = req.headers["x-webhook-signature"];
-  if (env.paymentsWebhookSecret) {
-    const payloadString = JSON.stringify(body);
-    const expected = createHmac("sha256", env.paymentsWebhookSecret).update(payloadString).digest("hex");
+  const timestampHeader = req.headers["x-webhook-timestamp"];
 
+  if (env.paymentsWebhookSecret) {
     if (typeof signature !== "string") {
       webhookSignatureInvalidTotal.inc({ provider });
       throw app.httpErrors.unauthorized("invalid webhook signature");
     }
+
+    if (!req.rawBody) {
+      webhookSignatureInvalidTotal.inc({ provider });
+      throw app.httpErrors.unauthorized("missing raw body for signature verification");
+    }
+
+    const rawBody = req.rawBody;
+    const timestamp = typeof timestampHeader === "string" ? timestampHeader : "";
+
+    if (timestamp) {
+      const ts = Number(timestamp);
+      if (!Number.isFinite(ts)) {
+        webhookSignatureInvalidTotal.inc({ provider });
+        throw app.httpErrors.unauthorized("invalid webhook timestamp");
+      }
+      const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - ts);
+      if (ageSeconds > 300) {
+        webhookSignatureInvalidTotal.inc({ provider });
+        throw app.httpErrors.unauthorized("stale webhook timestamp");
+      }
+    }
+
+    const signedPayload = timestamp ? `${timestamp}.${rawBody.toString("utf8")}` : rawBody.toString("utf8");
+    const expected = createHmac("sha256", env.paymentsWebhookSecret).update(signedPayload).digest("hex");
 
     const provided = Buffer.from(signature, "utf8");
     const expectedBuf = Buffer.from(expected, "utf8");

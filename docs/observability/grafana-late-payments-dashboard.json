@@ -1,0 +1,38 @@
+{
+  "title": "Late Payments & Webhook Integrity",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "title": "Late Payment Cases Pending",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum by (provider) (late_payment_cases_pending)" }]
+    },
+    {
+      "title": "Late Payment Cases Created (rate 5m)",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum by (provider) (rate(late_payment_cases_total[5m]))" }]
+    },
+    {
+      "title": "Webhook Signature Invalid (15m increase)",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum by (provider) (increase(webhook_signature_invalid_total[15m]))" }]
+    },
+    {
+      "title": "Webhook Replays (15m increase)",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum by (provider) (increase(webhook_replays_total[15m]))" }]
+    },
+    {
+      "title": "Manual Override Entries (1h)",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(increase(manual_override_entries_total[1h]))" }]
+    },
+    {
+      "title": "Manual Override Rate (1h, min volume)",
+      "type": "timeseries",
+      "targets": [{ "expr": "((sum(increase(manual_override_entries_total[1h])) / sum(increase(checkin_scan_total{status=\"valid\"}[1h]))) and sum(increase(checkin_scan_total{status=\"valid\"}[1h])) >= 200)" }]
+    }
+  ]
+}
