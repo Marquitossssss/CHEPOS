@@ -13,15 +13,21 @@ ADR-0000, ADR-0001, ...
 
 ## Definition of Done (mínimo)
 Cada ADR debe incluir:
-- Status (Proposed/Accepted/Deprecated)
+- Status (**obligatorio**: Proposed / Accepted / Deprecated)
+- Date (ISO 8601: `YYYY-MM-DD`)
+- Owners (rol/equipo; evitar persona individual cuando aplique)
 - Context
 - Decision
 - Decision Drivers
+- Alternatives (mínimo 2)
 - Consequences (positivas y negativas)
+- Failure Modes (detección, mitigación automática, acción operativa)
 - Operational Playbook (qué hace soporte en incidentes)
 - Audit Evidence (qué IDs/logs quedan)
-- Metrics/SLIs (cómo se verifica en prod)
+- Metrics/SLIs (cómo se verifica en prod; preferir P95/P99)
 - Rollback Plan (cómo se revierte)
+- Related ADRs (enlaces cruzados)
+- Affected Modules (mapeo a código)
 
 ## Plantilla
 Copiar y ajustar:
@@ -70,3 +76,12 @@ Copiar y ajustar:
 
 ## Rollback Plan
 - ...
+
+## Related ADRs
+- ADR-0000
+- ADR-0002
+
+## Affected Modules
+- apps/api/src/modules/<module>
+- apps/api/src/domain/<domain>
+- apps/web/src/<feature>
