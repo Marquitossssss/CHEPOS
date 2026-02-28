@@ -294,6 +294,9 @@ model LatePaymentCase {
   resolutionNotes   String?
   resolvedAt        DateTime?
   resolvedBy        String?
+  claimedBy         String?
+  claimedAt         DateTime?
+  claimExpiresAt    DateTime?
   order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   paymentAttempt    Payment?              @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 

@@ -34,6 +34,18 @@ export const latePaymentCasesPending = getOrCreateGauge(
   ["provider"]
 );
 
+export const latePaymentCasesClaimedTotal = getOrCreateCounter(
+  "late_payment_cases_claimed_total",
+  "Total de claims exitosos sobre late payment cases",
+  ["provider"]
+);
+
+export const latePaymentCasesClaimConflictsTotal = getOrCreateCounter(
+  "late_payment_cases_claim_conflicts_total",
+  "Total de conflictos de claim sobre late payment cases",
+  ["provider"]
+);
+
 export const manualOverrideEntriesTotal = getOrCreateCounter(
   "manual_override_entries_total",
   "Total de entradas manuales (manual override) en check-in",

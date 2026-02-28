@@ -18,6 +18,9 @@ type LatePaymentCase = {
   resolutionNotes?: string | null;
   resolvedAt?: string | null;
   resolvedBy?: string | null;
+  claimedBy?: string | null;
+  claimedAt?: string | null;
+  claimExpiresAt?: string | null;
   outbox?: {
     pendingEvents: number;
     lastRetryCount: number;
@@ -73,6 +76,23 @@ function outboxWarningBadge(pendingEvents: number, lastRetryCount: number): stri
   return null;
 }
 
+function parseUserIdFromToken(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const decoded = JSON.parse(atob(payload)) as { userId?: string };
+    return decoded.userId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isClaimActive(caseItem: LatePaymentCase, now = new Date()): boolean {
+  if (!caseItem.claimedBy || !caseItem.claimExpiresAt) return false;
+  return new Date(caseItem.claimExpiresAt).getTime() > now.getTime();
+}
+
 export function OpsLatePaymentsPage() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<LatePaymentStatus>("PENDING");
@@ -123,8 +143,11 @@ export function OpsLatePaymentsPage() {
   const casesQuery = useQuery({
     queryKey: ["late-payment-cases", queryString],
     enabled: Boolean(queryString),
-    queryFn: () => api<LatePaymentCase[]>(`/late-payment-cases?${queryString}`)
+    queryFn: () => api<LatePaymentCase[]>(`/late-payment-cases?${queryString}`),
+    refetchInterval: 30_000
   });
+
+  const currentUserId = parseUserIdFromToken(localStorage.getItem("token"));
 
   const refreshCaseAcrossStatuses = async (target: LatePaymentCase) => {
     if (!organizerId) return null;
@@ -145,6 +168,28 @@ export function OpsLatePaymentsPage() {
 
     return null;
   };
+
+  const claimMutation = useMutation({
+    mutationFn: (id: string) => api<LatePaymentCase>(`/late-payment-cases/${id}/claim`, { method: "POST" }),
+    onSuccess: async () => {
+      setFeedback("Caso tomado correctamente");
+      await qc.invalidateQueries({ queryKey: ["late-payment-cases"] });
+    },
+    onError: (err) => {
+      setFeedback(err instanceof Error ? err.message : "No se pudo tomar el caso");
+    }
+  });
+
+  const releaseMutation = useMutation({
+    mutationFn: (id: string) => api<LatePaymentCase>(`/late-payment-cases/${id}/release`, { method: "POST" }),
+    onSuccess: async () => {
+      setFeedback("Claim liberado");
+      await qc.invalidateQueries({ queryKey: ["late-payment-cases"] });
+    },
+    onError: (err) => {
+      setFeedback(err instanceof Error ? err.message : "No se pudo liberar el claim");
+    }
+  });
 
   const resolveMutation = useMutation({
     mutationFn: async () => {
@@ -222,6 +267,8 @@ export function OpsLatePaymentsPage() {
             <th align="left">orderId</th>
             <th align="left">caseId</th>
             <th align="left">createdAt</th>
+            <th align="left">claimedBy</th>
+            <th align="left">expira</th>
             <th align="left">pendingEvents</th>
             <th align="left">lastRetryCount</th>
             <th align="left">lastError</th>
@@ -243,6 +290,8 @@ export function OpsLatePaymentsPage() {
                 <td>{item.orderId}</td>
                 <td>{item.id}</td>
                 <td>{formatDate(item.createdAt)}</td>
+                <td>{item.claimedBy ?? "—"}</td>
+                <td>{formatDate(item.claimExpiresAt)}</td>
                 <td>{pendingEvents}</td>
                 <td>{lastRetryCount}</td>
                 <td title={lastError ?? ""}>
@@ -252,7 +301,17 @@ export function OpsLatePaymentsPage() {
                   ) : null}
                 </td>
                 <td>{warning ?? "-"}</td>
-                <td><button onClick={() => setSelectedCase(item)}>Ver detalle</button></td>
+                <td style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => setSelectedCase(item)}>Ver detalle</button>
+                  {(!isClaimActive(item) || !item.claimedBy || item.claimedBy === currentUserId) ? (
+                    <button onClick={() => claimMutation.mutate(item.id)} disabled={claimMutation.isPending}>Claim</button>
+                  ) : (
+                    <button disabled>Tomado</button>
+                  )}
+                  {item.claimedBy === currentUserId ? (
+                    <button onClick={() => releaseMutation.mutate(item.id)} disabled={releaseMutation.isPending}>Release</button>
+                  ) : null}
+                </td>
               </tr>
             );
           })}
@@ -263,6 +322,12 @@ export function OpsLatePaymentsPage() {
         <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
           <h3>Detalle · {selectedCase.id}</h3>
           <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(selectedCase, null, 2)}</pre>
+
+          {isClaimActive(selectedCase) && selectedCase.claimedBy !== currentUserId ? (
+            <p style={{ color: "#991b1b" }}>
+              Este caso está tomado por otro operador ({selectedCase.claimedBy}) hasta {formatDate(selectedCase.claimExpiresAt)}.
+            </p>
+          ) : null}
 
           <p><strong>Audit</strong></p>
           <ul>
@@ -289,7 +354,7 @@ export function OpsLatePaymentsPage() {
                 onClick={() => {
                   if (window.confirm("¿Confirmar resolución del caso?")) resolveMutation.mutate();
                 }}
-                disabled={resolveMutation.isPending}
+                disabled={resolveMutation.isPending || (isClaimActive(selectedCase) && selectedCase.claimedBy !== currentUserId)}
               >
                 Resolver
               </button>

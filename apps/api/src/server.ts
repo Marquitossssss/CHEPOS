@@ -16,6 +16,8 @@ import { emitDomainEvent } from "./lib/domainEvents.js";
 import { DomainEventName } from "./domain/events.js";
 import { emitDomainEventTx } from "./domain/outbox.js";
 import {
+  latePaymentCasesClaimConflictsTotal,
+  latePaymentCasesClaimedTotal,
   latePaymentCasesPending,
   latePaymentCasesTotal,
   manualOverrideEntriesTotal,
@@ -24,6 +26,7 @@ import {
 } from "./observability/metrics.js";
 import { ensureNotReplay } from "./modules/payments/webhook-idempotency.js";
 import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
+import { canActorClaim, claimExpiryFrom } from "./modules/payments/latePaymentClaimLease.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 
 const app = Fastify({ logger: true });
@@ -143,6 +146,10 @@ async function requireMembership(userId: string, organizerId: string, roles: Rol
     throw app.httpErrors.forbidden("Sin permisos para este organizador");
   }
   return membership;
+}
+
+function canAdminOverride(role: string) {
+  return role === "owner" || role === "admin";
 }
 
 async function syncLatePaymentPendingGauge(provider?: string) {
@@ -684,6 +691,89 @@ app.get("/late-payment-cases", { preHandler: verifyAuth }, async (req: any) => {
   });
 });
 
+app.post("/late-payment-cases/:id/claim", { preHandler: verifyAuth }, async (req: any) => {
+  const user = req.user as JwtPayload;
+  const params = z.object({ id: z.string().uuid() }).parse(req.params);
+
+  const lateCase = await prisma.latePaymentCase.findUnique({
+    where: { id: params.id },
+    include: { order: { select: { organizerId: true } } }
+  });
+
+  if (!lateCase) {
+    throw app.httpErrors.notFound("LatePaymentCase no encontrado");
+  }
+
+  await requireMembership(user.userId, lateCase.order.organizerId, ["owner", "admin", "staff"]);
+
+  if (lateCase.status !== "PENDING") {
+    throw app.httpErrors.conflict("Solo se puede claimear casos en estado PENDING");
+  }
+
+  const now = new Date();
+  if (!canActorClaim({ claimedBy: lateCase.claimedBy, claimExpiresAt: lateCase.claimExpiresAt }, user.userId, now)) {
+    latePaymentCasesClaimConflictsTotal.inc({ provider: lateCase.provider });
+    throw app.httpErrors.conflict(
+      `Caso tomado por ${lateCase.claimedBy ?? "otro operador"} hasta ${lateCase.claimExpiresAt?.toISOString() ?? "N/A"}`
+    );
+  }
+
+  const updateResult = await prisma.latePaymentCase.updateMany({
+    where: { id: lateCase.id, version: lateCase.version },
+    data: {
+      claimedBy: user.userId,
+      claimedAt: now,
+      claimExpiresAt: claimExpiryFrom(now),
+      version: { increment: 1 }
+    }
+  });
+
+  if (updateResult.count === 0) {
+    latePaymentCasesClaimConflictsTotal.inc({ provider: lateCase.provider });
+    throw app.httpErrors.conflict("LatePaymentCase actualizado por otro operador");
+  }
+
+  latePaymentCasesClaimedTotal.inc({ provider: lateCase.provider });
+  return prisma.latePaymentCase.findUniqueOrThrow({ where: { id: lateCase.id } });
+});
+
+app.post("/late-payment-cases/:id/release", { preHandler: verifyAuth }, async (req: any) => {
+  const user = req.user as JwtPayload;
+  const params = z.object({ id: z.string().uuid() }).parse(req.params);
+
+  const lateCase = await prisma.latePaymentCase.findUnique({
+    where: { id: params.id },
+    include: { order: { select: { organizerId: true } } }
+  });
+
+  if (!lateCase) {
+    throw app.httpErrors.notFound("LatePaymentCase no encontrado");
+  }
+
+  const membership = await requireMembership(user.userId, lateCase.order.organizerId, ["owner", "admin", "staff"]);
+
+  const actorCanRelease = lateCase.claimedBy === user.userId || canAdminOverride(membership.role);
+  if (!actorCanRelease) {
+    throw app.httpErrors.forbidden("Solo el operador que tomó el caso o un admin puede liberarlo");
+  }
+
+  const updateResult = await prisma.latePaymentCase.updateMany({
+    where: { id: lateCase.id, version: lateCase.version },
+    data: {
+      claimedBy: null,
+      claimedAt: null,
+      claimExpiresAt: null,
+      version: { increment: 1 }
+    }
+  });
+
+  if (updateResult.count === 0) {
+    throw app.httpErrors.conflict("LatePaymentCase actualizado por otro operador");
+  }
+
+  return prisma.latePaymentCase.findUniqueOrThrow({ where: { id: lateCase.id } });
+});
+
 app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (req: any) => {
   const user = req.user as JwtPayload;
   const params = z.object({ id: z.string().uuid() }).parse(req.params);
@@ -703,7 +793,13 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
     throw app.httpErrors.notFound("LatePaymentCase no encontrado");
   }
 
-  await requireMembership(user.userId, lateCase.order.organizerId, ["owner", "admin", "staff"]);
+  const membership = await requireMembership(user.userId, lateCase.order.organizerId, ["owner", "admin", "staff"]);
+
+  const actorOwnsClaim = lateCase.claimedBy === user.userId;
+  const actorCanResolve = actorOwnsClaim || canAdminOverride(membership.role);
+  if (!actorCanResolve) {
+    throw app.httpErrors.conflict("Debes tomar el caso antes de resolver (o ser admin)");
+  }
 
   const statusByAction = {
     ACCEPT: "ACCEPTED",
@@ -737,6 +833,9 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
         resolutionNotes: body.resolutionNotes ?? null,
         resolvedAt,
         resolvedBy: user.userId,
+        claimedBy: null,
+        claimedAt: null,
+        claimExpiresAt: null,
         version: { increment: 1 }
       }
     });
