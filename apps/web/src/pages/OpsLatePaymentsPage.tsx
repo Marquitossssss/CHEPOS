@@ -18,10 +18,11 @@ type LatePaymentCase = {
   resolutionNotes?: string | null;
   resolvedAt?: string | null;
   resolvedBy?: string | null;
-  retryCount?: number | null;
-  lastError?: string | null;
-  lockedAt?: string | null;
-  dispatchedAt?: string | null;
+  outbox?: {
+    pendingEvents: number;
+    lastRetryCount: number;
+    lastError: string | null;
+  };
 };
 
 const ALL_STATUSES: LatePaymentStatus[] = ["PENDING", "ACCEPTED", "REJECTED", "REFUND_REQUESTED", "REFUNDED"];
@@ -59,6 +60,17 @@ function statusBadgeStyle(status: LatePaymentStatus): CSSProperties {
     background: "#f5f5f5",
     color: palette[status]
   };
+}
+
+function truncate(value: string, max = 48) {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+}
+
+function outboxWarningBadge(pendingEvents: number, lastRetryCount: number): string | null {
+  if (pendingEvents > 0) return `⚠ pending:${pendingEvents}`;
+  if (lastRetryCount > 0) return `⚠ retries:${lastRetryCount}`;
+  return null;
 }
 
 export function OpsLatePaymentsPage() {
@@ -210,28 +222,40 @@ export function OpsLatePaymentsPage() {
             <th align="left">orderId</th>
             <th align="left">caseId</th>
             <th align="left">createdAt</th>
-            <th align="left">retryCount</th>
+            <th align="left">pendingEvents</th>
+            <th align="left">lastRetryCount</th>
             <th align="left">lastError</th>
-            <th align="left">lockedAt</th>
-            <th align="left">dispatchedAt</th>
+            <th align="left">warning</th>
             <th align="left">acción</th>
           </tr>
         </thead>
         <tbody>
-          {(casesQuery.data ?? []).map((item) => (
-            <tr key={item.id} style={{ borderTop: "1px solid #ddd" }}>
-              <td><span style={statusBadgeStyle(item.status)}>{item.status}</span></td>
-              <td>{item.provider}</td>
-              <td>{item.orderId}</td>
-              <td>{item.id}</td>
-              <td>{formatDate(item.createdAt)}</td>
-              <td>{item.retryCount ?? "-"}</td>
-              <td>{item.lastError ?? "-"}</td>
-              <td>{formatDate(item.lockedAt)}</td>
-              <td>{formatDate(item.dispatchedAt)}</td>
-              <td><button onClick={() => setSelectedCase(item)}>Ver detalle</button></td>
-            </tr>
-          ))}
+          {(casesQuery.data ?? []).map((item) => {
+            const pendingEvents = item.outbox?.pendingEvents ?? 0;
+            const lastRetryCount = item.outbox?.lastRetryCount ?? 0;
+            const lastError = item.outbox?.lastError ?? null;
+            const warning = outboxWarningBadge(pendingEvents, lastRetryCount);
+
+            return (
+              <tr key={item.id} style={{ borderTop: "1px solid #ddd" }}>
+                <td><span style={statusBadgeStyle(item.status)}>{item.status}</span></td>
+                <td>{item.provider}</td>
+                <td>{item.orderId}</td>
+                <td>{item.id}</td>
+                <td>{formatDate(item.createdAt)}</td>
+                <td>{pendingEvents}</td>
+                <td>{lastRetryCount}</td>
+                <td title={lastError ?? ""}>
+                  {lastError ? truncate(lastError) : "-"}
+                  {lastError ? (
+                    <button style={{ marginLeft: 6 }} onClick={() => navigator.clipboard.writeText(lastError)}>copy</button>
+                  ) : null}
+                </td>
+                <td>{warning ?? "-"}</td>
+                <td><button onClick={() => setSelectedCase(item)}>Ver detalle</button></td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
