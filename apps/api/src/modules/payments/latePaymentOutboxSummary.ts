@@ -14,7 +14,7 @@ type OutboxSummaryRow = {
 };
 
 /**
- * lastRetryCount/lastError use the latest outbox row by createdAt DESC for each case.
+ * lastRetryCount/lastError use the latest outbox row by createdAt DESC, id DESC for each case.
  */
 export async function fetchLatePaymentOutboxSummary(
   db: PrismaClient | Prisma.TransactionClient,
@@ -26,8 +26,8 @@ export async function fetchLatePaymentOutboxSummary(
     SELECT
       "aggregateId" AS "caseId",
       COUNT(*) FILTER (WHERE "dispatchedAt" IS NULL)::int AS "pendingEvents",
-      (ARRAY_AGG("retryCount" ORDER BY "createdAt" DESC))[1]::int AS "lastRetryCount",
-      (ARRAY_AGG("lastError" ORDER BY "createdAt" DESC))[1] AS "lastError"
+      (ARRAY_AGG("retryCount" ORDER BY "createdAt" DESC, "id" DESC))[1]::int AS "lastRetryCount",
+      (ARRAY_AGG("lastError" ORDER BY "createdAt" DESC, "id" DESC))[1] AS "lastError"
     FROM "DomainEventOutbox"
     WHERE "aggregateType" = 'LatePaymentCase'
       AND "aggregateId" IN (${Prisma.join(caseIds)})
