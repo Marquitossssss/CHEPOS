@@ -7,8 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  adr-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup node 18 (pinned)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
+
+      - name: lint ADR contract
+        run: node ./scripts/lint-adrs.js
+
   ci:
     runs-on: ubuntu-latest
+    needs: adr-check
     env:
       POSTGRES_PASSWORD: ci_pg_required_token_do_not_use
       JWT_ACCESS_SECRET: ci_jwt_access_secret_min_length_24_chars
