@@ -1,0 +1,148 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-articket}
+      POSTGRES_USER: ${POSTGRES_USER:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-articket} -d ${POSTGRES_DB:-articket}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: runtime
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
+      POSTGRES_DB: ${POSTGRES_DB:-articket}
+      POSTGRES_USER: ${POSTGRES_USER:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
+      JWT_ACCESS_EXPIRES: ${JWT_ACCESS_EXPIRES:-15m}
+      JWT_REFRESH_EXPIRES: ${JWT_REFRESH_EXPIRES:-7d}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
+      API_PORT: 3000
+      SEED_ON_START: ${SEED_ON_START:-false}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: runtime
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
+      POSTGRES_DB: ${POSTGRES_DB:-articket}
+      POSTGRES_USER: ${POSTGRES_USER:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9101}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@articket.local}
+      SENDGRID_TEMPLATE_ORDER_PAID: ${SENDGRID_TEMPLATE_ORDER_PAID:-}
+    depends_on:
+      - postgres
+      - redis
+    command: ["sh", "entrypoint.sh", "worker"]
+    ports:
+      - "9101:9101"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:9101/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api-test:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: test
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-articket}
+      POSTGRES_USER: ${POSTGRES_USER:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET required}
+      QR_SECRET: ${QR_SECRET:?QR_SECRET required}
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    depends_on:
+      - postgres
+      - redis
+    command: ["sh", "entrypoint.sh", "test"]
+
+  seed:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: tools
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-articket}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-articket}?schema=public}
+      POSTGRES_DB: ${POSTGRES_DB:-articket}
+      POSTGRES_USER: ${POSTGRES_USER:-articket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    depends_on:
+      - postgres
+    command:
+      [
+        "sh",
+        "-lc",
+        "pnpm --filter @articket/api exec prisma migrate deploy && pnpm --filter @articket/api db:seed"
+      ]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    depends_on:
+      - api
+    ports:
+      - "5173:5173"
+
+volumes:
+  pg_data:

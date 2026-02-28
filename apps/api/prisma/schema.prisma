@@ -1,0 +1,358 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizerRole {
+  owner
+  admin
+  staff
+  scanner
+}
+
+enum EventVisibility {
+  draft
+  published
+  hidden
+}
+
+enum OrderStatus {
+  pending
+  reserved
+  paid
+  canceled
+  expired
+  refunded
+}
+
+enum LatePaymentCaseStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REFUND_REQUESTED
+  REFUNDED
+}
+
+enum TicketStatus {
+  issued
+  void
+  checked_in
+}
+
+enum DomainEventType {
+  ORDER_RESERVED
+  ORDER_PAID
+  TICKETS_ISSUED
+  TICKET_CHECKED_IN
+  ORDER_CONFIRMATION_EMAIL_SENT
+  ORDER_EXPIRED
+  INVENTORY_RESERVATION_RELEASED
+  RESERVATION_EXPIRED
+  INVENTORY_RELEASED
+  LATE_PAYMENT_DETECTED
+  LATE_PAYMENT_CASE_CREATED
+  LATE_PAYMENT_CASE_RESOLVED
+  MANUAL_OVERRIDE_EXECUTED
+}
+
+enum DomainActorType {
+  user
+  system
+  worker
+  webhook
+}
+
+enum DomainAggregateType {
+  order
+  ticket
+  inventory_reservation
+  event
+  notification
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  orders       Order[]
+  scans        TicketScan[]
+
+  @@index([createdAt])
+}
+
+model Organizer {
+  id            String       @id @default(uuid())
+  name          String
+  slug          String       @unique
+  createdAt     DateTime     @default(now())
+  memberships   Membership[]
+  events        Event[]
+  orders        Order[]
+  serviceFeeBps Int          @default(0)
+  taxBps        Int          @default(0)
+
+  @@index([createdAt])
+}
+
+model Membership {
+  id          String        @id @default(uuid())
+  userId      String
+  organizerId String
+  role        OrganizerRole
+  user        User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organizer   Organizer     @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([userId, organizerId])
+  @@index([organizerId, role])
+}
+
+model Event {
+  id          String          @id @default(uuid())
+  organizerId String
+  name        String
+  slug        String
+  description String?
+  venue       String?
+  timezone    String
+  startsAt    DateTime
+  endsAt      DateTime
+  visibility  EventVisibility @default(draft)
+  capacity    Int
+  createdAt   DateTime        @default(now())
+  organizer   Organizer       @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ticketTypes TicketType[]
+  orders      Order[]
+  scans       TicketScan[]
+
+  @@unique([organizerId, slug])
+  @@index([organizerId, visibility])
+  @@index([startsAt])
+}
+
+model TicketType {
+  id             String                 @id @default(uuid())
+  eventId        String
+  name           String
+  priceCents     Int
+  currency       String
+  quota          Int
+  salesStart     DateTime?
+  salesEnd       DateTime?
+  maxPerOrder    Int                    @default(10)
+  requiredFields Json?
+  createdAt      DateTime               @default(now())
+  event          Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orderItems     OrderItem[]
+  reservations   InventoryReservation[]
+  tickets        Ticket[]
+
+  @@index([eventId])
+  @@index([eventId, salesStart, salesEnd])
+}
+
+model Order {
+  id                         String                 @id @default(uuid())
+  organizerId                String
+  eventId                    String
+  userId                     String?
+  orderNumber                String                 @unique
+  customerEmail              String
+  status                     OrderStatus            @default(pending)
+  subtotalCents              Int                    @default(0)
+  feeCents                   Int                    @default(0)
+  taxCents                   Int                    @default(0)
+  totalCents                 Int                    @default(0)
+  reservedUntil              DateTime?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+  organizer                  Organizer              @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  event                      Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user                       User?                  @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items                      OrderItem[]
+  tickets                    Ticket[]
+  payments                   Payment[]
+  reservations               InventoryReservation[]
+  emailEvents                EmailEvent[]
+  latePaymentCases           LatePaymentCase[]
+  latePaymentReviewRequired  Boolean                @default(false)
+  confirmationEmailSentAt    DateTime?
+  confirmationEmailMessageId String?
+
+  @@index([organizerId, status, createdAt])
+  @@index([eventId, status])
+  @@index([reservedUntil, status])
+}
+
+model OrderItem {
+  id             String     @id @default(uuid())
+  orderId        String
+  ticketTypeId   String
+  quantity       Int
+  unitPriceCents Int
+  totalCents     Int
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ticketType     TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([ticketTypeId, orderId])
+}
+
+model Ticket {
+  id           String       @id @default(uuid())
+  orderId      String
+  ticketTypeId String
+  eventId      String
+  status       TicketStatus @default(issued)
+  code         String       @unique
+  qrPayload    String
+  issuedAt     DateTime     @default(now())
+  checkedInAt  DateTime?
+  checkedInBy  String?
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ticketType   TicketType   @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  scans        TicketScan[]
+
+  @@index([orderId])
+  @@index([eventId, status])
+}
+
+model TicketScan {
+  id          String   @id @default(uuid())
+  ticketId    String
+  eventId     String
+  scannedById String?
+  scannedAt   DateTime @default(now())
+  result      String
+  reason      String?
+  gate        String?
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  scannedBy   User?    @relation(fields: [scannedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([eventId, scannedAt])
+  @@index([ticketId, scannedAt])
+}
+
+model InventoryReservation {
+  id           String     @id @default(uuid())
+  orderId      String
+  ticketTypeId String
+  quantity     Int
+  expiresAt    DateTime
+  createdAt    DateTime   @default(now())
+  releasedAt   DateTime?
+  order        Order      @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([ticketTypeId, expiresAt, releasedAt])
+  @@index([orderId, releasedAt])
+}
+
+model Payment {
+  id               String            @id @default(uuid())
+  orderId          String
+  provider         String
+  providerRef      String
+  status           String
+  amountCents      Int
+  createdAt        DateTime          @default(now())
+  order            Order             @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  latePaymentCases LatePaymentCase[]
+
+  @@unique([provider, providerRef])
+  @@index([orderId, createdAt])
+}
+
+model ProcessedWebhookEvent {
+  id              String   @id @default(uuid())
+  provider        String
+  externalEventId String
+  processedAt     DateTime @default(now())
+
+  @@unique([provider, externalEventId])
+  @@index([processedAt])
+}
+
+model LatePaymentCase {
+  id                String                @id @default(uuid())
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  version           Int                   @default(0)
+  orderId           String
+  reserveId         String?
+  provider          String
+  providerPaymentId String?
+  paymentAttemptId  String?
+  inventoryReleased Boolean               @default(false)
+  status            LatePaymentCaseStatus @default(PENDING)
+  detectedAt        DateTime              @default(now())
+  resolutionNotes   String?
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  paymentAttempt    Payment?              @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, providerPaymentId])
+  @@unique([orderId, paymentAttemptId])
+  @@index([orderId])
+}
+
+model EmailEvent {
+  id        String   @id @default(uuid())
+  orderId   String?
+  provider  String
+  eventType String
+  sgEventId String?
+  messageId String?
+  recipient String?
+  payload   Json
+  createdAt DateTime @default(now())
+  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, sgEventId])
+  @@index([orderId, createdAt])
+  @@index([provider, eventType, createdAt])
+}
+
+model DomainEvent {
+  id            String              @id @default(uuid())
+  type          DomainEventType
+  version       Int                 @default(1)
+  correlationId String?
+  actorType     DomainActorType
+  actorId       String?
+  aggregateType DomainAggregateType
+  aggregateId   String
+  eventId       String?
+  orderId       String?
+  ticketId      String?
+  organizerId   String?
+  context       Json
+  payload       Json
+  occurredAt    DateTime            @default(now())
+
+  @@index([eventId, occurredAt])
+  @@index([organizerId, occurredAt])
+  @@index([type, occurredAt])
+  @@index([correlationId, occurredAt])
+  @@index([aggregateType, aggregateId, occurredAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  organizerId String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([organizerId, createdAt])
+  @@index([entityType, entityId])
+}

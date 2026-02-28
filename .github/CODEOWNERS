@@ -1,0 +1,12 @@
+# Fallback owner for all paths
+* @tech-lead
+
+# Backend domain and schema changes
+/apps/api/** @backend-team @tech-lead
+/apps/api/prisma/** @architecture-team @tech-lead
+
+# ADR governance and architecture decisions
+/docs/adr/** @architecture-team @tech-lead
+
+# Operational runbooks and on-call docs
+/docs/ops/** @backend-team @ops-team @tech-lead
