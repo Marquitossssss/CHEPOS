@@ -7,7 +7,7 @@ async function main() {
   const user = await prisma.user.upsert({
     where: { email: "owner@articket.local" },
     update: {},
-    create: { email: "owner@articket.local", passwordHash: await bcrypt.hash("Password123!", 12) }
+    create: { email: "owner@articket.local", passwordHash: await bcrypt.hash("afaafc29a40aa", 12) }
   });
 
   const organizer = await prisma.organizer.upsert({

@@ -13,7 +13,7 @@ function Login() {
     mutationFn: (payload: { email: string; password: string }) => api<{ accessToken: string }>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
     onSuccess: (data) => { localStorage.setItem("token", data.accessToken); navigate("/dashboard"); }
   });
-  return <div><h2>Login</h2><button onClick={() => mutation.mutate({ email: "owner@articket.local", password: "Password123!" })}>Ingresar demo</button></div>;
+  return <div><h2>Login</h2><button onClick={() => mutation.mutate({ email: "owner@articket.local", password: "afaafc29a40aa" })}>Ingresar demo</button></div>;
 }
 
 function Dashboard() {
