@@ -1,4 +1,4 @@
-# Articket Platform
+#  Platform
 
 ![CI](https://github.com/<owner>/articket-platform/actions/workflows/ci.yml/badge.svg)
 ![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)
