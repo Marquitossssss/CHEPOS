@@ -391,7 +391,7 @@ async function seedDemoRich(tx: Tx) {
 
   const checkedInCodes = paidTicketCodes.slice(0, 7);
   for (const [idx, code] of checkedInCodes.entries()) {
-    const ticket = await must(tx.ticket.findUnique({ where: { code } }), `ticket ${code} not found`);
+    const ticket = must(await tx.ticket.findUnique({ where: { code } }), `ticket ${code} not found`);
     await tx.ticket.update({
       where: { id: ticket.id },
       data: {
@@ -436,11 +436,11 @@ async function seedDemoRich(tx: Tx) {
 
   await tx.domainEvent.deleteMany({ where: { correlationId: { startsWith: "DEMO-" } } });
 
-  const domainEvents: Array<{ type: Prisma.DomainEventType; aggregateType: Prisma.DomainAggregateType; aggregateId: string; orderId?: string; ticketId?: string; occurredAt: Date }> = [];
+  const domainEvents: Array<{ type: "ORDER_PAID" | "TICKET_CHECKED_IN"; aggregateType: "order" | "ticket"; aggregateId: string; orderId?: string; ticketId?: string; occurredAt: Date }> = [];
 
   for (let i = 1; i <= 10; i += 1) {
     const orderNumber = `DEMO-ORDER-${String(i).padStart(4, "0")}`;
-    const order = await must(tx.order.findUnique({ where: { orderNumber } }), `order ${orderNumber} missing`);
+    const order = must(await tx.order.findUnique({ where: { orderNumber } }), `order ${orderNumber} missing`);
     domainEvents.push({
       type: "ORDER_PAID",
       aggregateType: "order",

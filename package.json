@@ -13,6 +13,7 @@
     "format": "pnpm -r format",
     "db:migrate": "pnpm --filter @articket/api db:migrate",
     "db:seed": "pnpm --filter @articket/api db:seed",
+    "seed:verify": "pnpm --filter @articket/api exec tsx scripts/verify-seed.ts",
     "smoke": "./scripts/runtime-smoke.sh"
   }
 }
