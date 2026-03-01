@@ -70,7 +70,15 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 8
+          version: 9.12.0
+
+      - name: debug lockfile
+        run: |
+          pwd
+          ls -la
+          test -f pnpm-lock.yaml && echo "pnpm-lock.yaml exists" || (echo "pnpm-lock.yaml missing" && exit 1)
+          node -p "require('./package.json').packageManager || 'no packageManager field'"
+          head -n 20 pnpm-lock.yaml
 
       - name: install dependencies
         run: pnpm install --frozen-lockfile
