@@ -88,8 +88,33 @@ jobs:
 
       - name: summarize seed verification
         if: always()
+        shell: bash
         run: |
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('seed-verify.json','utf8')); let s='## Seed verify (demo_rich)\n'; s+=`- ok: ${p.ok}\n`; s+=`- events: ${p.events}\n`; s+=`- orders: ${p.orders} (paid: ${p.ordersPaid}, refunded: ${p.ordersRefunded}, canceled: ${p.ordersCanceled}, expired: ${p.ordersExpired})\n`; s+=`- tickets: ${p.tickets} (issued: ${p.ticketsIssued}, checkedIn: ${p.ticketsCheckedIn})\n`; s+=`- reservedActive: ${p.reservedActive}\n`; s+=`- revenuePaid: ${p.revenuePaid}\n`; s+=`- emailFailures: ${p.emailFailures}\n`; if(p.invariantViolations?.length){ s+='- invariantViolations:\n'; for(const v of p.invariantViolations){ s+=`  - ${v.key}: ${v.violations}\n`; } } else { s+='- invariantViolations: none\n'; } fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, s);"
+          node <<'NODE'
+          const fs = require('fs');
+          if (!fs.existsSync('seed-verify.json')) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Seed verify (demo_rich)\n- seed-verify.json missing\n');
+            process.exit(0);
+          }
+          const p = JSON.parse(fs.readFileSync('seed-verify.json','utf8'));
+          let s = '## Seed verify (demo_rich)\n';
+          s += `- ok: ${p.ok}\n`;
+          s += `- events: ${p.events}\n`;
+          s += `- orders: ${p.orders} (paid: ${p.ordersPaid}, refunded: ${p.ordersRefunded}, canceled: ${p.ordersCanceled}, expired: ${p.ordersExpired})\n`;
+          s += `- tickets: ${p.tickets} (issued: ${p.ticketsIssued}, checkedIn: ${p.ticketsCheckedIn})\n`;
+          s += `- reservedActive: ${p.reservedActive}\n`;
+          s += `- revenuePaid: ${p.revenuePaid}\n`;
+          s += `- emailFailures: ${p.emailFailures}\n`;
+          if (p.invariantViolations?.length) {
+            s += `- invariantViolations:\n`;
+            for (const v of p.invariantViolations) {
+              s += ` - ${v.key}: ${v.violations}\n`;
+            }
+          } else {
+            s += `- invariantViolations: none\n`;
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, s);
+          NODE
 
       - name: upload seed verification artifact
         if: always()
