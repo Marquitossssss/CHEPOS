@@ -343,6 +343,22 @@ model DomainEvent {
   @@index([aggregateType, aggregateId, occurredAt])
 }
 
+model DomainEventOutbox {
+  id            String   @id @default(uuid())
+  eventName     String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  createdAt     DateTime @default(now())
+  dispatchedAt  DateTime?
+  retryCount    Int      @default(0)
+  lastError     String?
+  correlationId String?
+
+  @@index([dispatchedAt])
+  @@index([createdAt])
+}
+
 model AuditLog {
   id          String   @id @default(uuid())
   organizerId String?
