@@ -2,19 +2,30 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-type Check = { label: string; ok: boolean; detail?: string };
+type Check = { label: string; ok: boolean; violations: number; detail?: string };
+
+type InvariantViolation = {
+  key: string;
+  violations: number;
+};
 
 type VerifySummary = {
   ok: boolean;
   events?: number;
   orders?: number;
   ordersPaid?: number;
+  ordersRefunded?: number;
+  ordersCanceled?: number;
+  ordersExpired?: number;
   tickets?: number;
+  ticketsIssued?: number;
+  ticketsCheckedIn?: number;
   checkedIn?: number;
+  reservedActive?: number;
   ticketTypes?: number;
   revenuePaid?: number;
   emailFailures?: number;
-  invariantViolations: string[];
+  invariantViolations: InvariantViolation[];
   error?: string;
 };
 
@@ -27,8 +38,8 @@ async function scalarInt(sql: string): Promise<number> {
   return Number(rows[0]?.value ?? 0);
 }
 
-function push(checks: Check[], label: string, ok: boolean, detail?: string) {
-  checks.push({ label, ok, detail });
+function push(checks: Check[], label: string, ok: boolean, violations = ok ? 0 : 1, detail?: string) {
+  checks.push({ label, ok, violations, detail });
 }
 
 function printHuman(summary: VerifySummary) {
@@ -40,7 +51,7 @@ function printHuman(summary: VerifySummary) {
 
   if (!summary.ok) {
     console.error("✖ Invariant violations:");
-    for (const label of summary.invariantViolations) console.error(` - ${label}`);
+    for (const v of summary.invariantViolations) console.error(` - ${v.key} (violations=${v.violations})`);
     if (summary.error) console.error(` - error: ${summary.error}`);
     return;
   }
@@ -70,7 +81,7 @@ async function verify(): Promise<VerifySummary> {
   if (!organizer || !event) {
     return {
       ok: false,
-      invariantViolations: ["dataset.demo_rich.missing"],
+      invariantViolations: [{ key: "dataset.demo_rich.missing", violations: 1 }],
       error: "demo_rich dataset missing (demo-org / demo-event-1 not found). Run SEED_PROFILE=demo_rich pnpm -w db:seed first."
     };
   }
@@ -88,11 +99,11 @@ async function verify(): Promise<VerifySummary> {
       _sum: { totalCents: true }
     }))._sum.totalCents ?? 0;
 
-  push(checks, "dataset.minimum.events>=3", eventsCount >= 3, `events=${eventsCount}`);
-  push(checks, "dataset.minimum.ordersPaid>=10", paidOrders >= 10, `ordersPaid=${paidOrders}`);
-  push(checks, "dataset.minimum.tickets>=10", totalTickets >= 10, `tickets=${totalTickets}`);
-  push(checks, "dataset.minimum.checkedIn>=3", checkedIn >= 3, `checkedIn=${checkedIn}`);
-  push(checks, "dataset.minimum.ticketTypes>=3", ticketTypes >= 3, `ticketTypes=${ticketTypes}`);
+  push(checks, "dataset.minimum.events>=3", eventsCount >= 3, eventsCount >= 3 ? 0 : 1, `events=${eventsCount}`);
+  push(checks, "dataset.minimum.ordersPaid>=10", paidOrders >= 10, paidOrders >= 10 ? 0 : 1, `ordersPaid=${paidOrders}`);
+  push(checks, "dataset.minimum.tickets>=10", totalTickets >= 10, totalTickets >= 10 ? 0 : 1, `tickets=${totalTickets}`);
+  push(checks, "dataset.minimum.checkedIn>=3", checkedIn >= 3, checkedIn >= 3 ? 0 : 1, `checkedIn=${checkedIn}`);
+  push(checks, "dataset.minimum.ticketTypes>=3", ticketTypes >= 3, ticketTypes >= 3 ? 0 : 1, `ticketTypes=${ticketTypes}`);
 
   const duplicateDemoOrders = await scalarInt(`
     SELECT COUNT(*)::bigint AS value
@@ -104,7 +115,7 @@ async function verify(): Promise<VerifySummary> {
       HAVING COUNT(*) > 1
     ) x;
   `);
-  push(checks, "invariant.noDuplicateDemoOrderNumbers", duplicateDemoOrders === 0, `duplicates=${duplicateDemoOrders}`);
+  push(checks, "invariant.noDuplicateDemoOrderNumbers", duplicateDemoOrders === 0, duplicateDemoOrders, `duplicates=${duplicateDemoOrders}`);
 
   const duplicateDemoTickets = await scalarInt(`
     SELECT COUNT(*)::bigint AS value
@@ -116,7 +127,7 @@ async function verify(): Promise<VerifySummary> {
       HAVING COUNT(*) > 1
     ) x;
   `);
-  push(checks, "invariant.noDuplicateDemoTicketCodes", duplicateDemoTickets === 0, `duplicates=${duplicateDemoTickets}`);
+  push(checks, "invariant.noDuplicateDemoTicketCodes", duplicateDemoTickets === 0, duplicateDemoTickets, `duplicates=${duplicateDemoTickets}`);
 
   const overbookedTicketTypes = await scalarInt(`
     WITH sold AS (
@@ -144,7 +155,7 @@ async function verify(): Promise<VerifySummary> {
     WHERE tt."eventId" = '${eventId}'::uuid
       AND (COALESCE(s.sold,0) + COALESCE(r.reserved_active,0)) > tt.quota;
   `);
-  push(checks, "invariant.noOverbooking", overbookedTicketTypes === 0, `overbookedTicketTypes=${overbookedTicketTypes}`);
+  push(checks, "invariant.noOverbooking", overbookedTicketTypes === 0, overbookedTicketTypes, `overbookedTicketTypes=${overbookedTicketTypes}`);
 
   const checkedInGtSold = await scalarInt(`
     WITH sold AS (
@@ -165,7 +176,7 @@ async function verify(): Promise<VerifySummary> {
     )
     SELECT CASE WHEN (SELECT checked_in FROM checked) <= (SELECT sold FROM sold) THEN 0 ELSE 1 END::bigint AS value;
   `);
-  push(checks, "invariant.checkedIn<=sold", checkedInGtSold === 0);
+  push(checks, "invariant.checkedIn<=sold", checkedInGtSold === 0, checkedInGtSold);
 
   const activeTicketsOnInvalidOrders = await scalarInt(`
     SELECT COUNT(*)::bigint AS value
@@ -175,7 +186,7 @@ async function verify(): Promise<VerifySummary> {
       AND o.status IN ('canceled','refunded','expired')
       AND t.status IN ('issued','checked_in');
   `);
-  push(checks, "invariant.noActiveTicketsOnCanceledRefundedExpired", activeTicketsOnInvalidOrders === 0, `violations=${activeTicketsOnInvalidOrders}`);
+  push(checks, "invariant.noActiveTicketsOnCanceledRefundedExpired", activeTicketsOnInvalidOrders === 0, activeTicketsOnInvalidOrders, `violations=${activeTicketsOnInvalidOrders}`);
 
   const activeReservationsExpired = await scalarInt(`
     SELECT COUNT(*)::bigint AS value
@@ -185,7 +196,7 @@ async function verify(): Promise<VerifySummary> {
       AND r."releasedAt" IS NULL
       AND r."expiresAt" <= NOW();
   `);
-  push(checks, "invariant.activeReservationsMustExpireInFuture", activeReservationsExpired === 0, `violations=${activeReservationsExpired}`);
+  push(checks, "invariant.activeReservationsMustExpireInFuture", activeReservationsExpired === 0, activeReservationsExpired, `violations=${activeReservationsExpired}`);
 
   const emailFailures = await prisma.emailEvent.count({
     where: {
@@ -193,7 +204,7 @@ async function verify(): Promise<VerifySummary> {
       eventType: { in: ["bounce", "dropped", "deferred", "blocked", "spamreport", "unsubscribe"] }
     }
   });
-  push(checks, "dataset.alerts.emailFailures>=1", emailFailures >= 1, `emailFailures=${emailFailures}`);
+  push(checks, "dataset.alerts.emailFailures>=1", emailFailures >= 1, emailFailures >= 1 ? 0 : 1, `emailFailures=${emailFailures}`);
 
   const failed = checks.filter((c) => !c.ok);
 
@@ -206,10 +217,23 @@ async function verify(): Promise<VerifySummary> {
     ordersPaid: paidOrders,
     tickets: totalTickets,
     checkedIn,
+    ticketsIssued: await prisma.ticket.count({ where: { eventId, code: { startsWith: DEMO_TICKET_PREFIX }, status: "issued" } }),
+    ticketsCheckedIn: checkedIn,
     ticketTypes,
+    reservedActive: await scalarInt(`
+      SELECT COALESCE(SUM(r.quantity),0)::bigint AS value
+      FROM "InventoryReservation" r
+      JOIN "Order" o ON o.id = r."orderId"
+      WHERE o."eventId" = '${eventId}'::uuid
+        AND r."releasedAt" IS NULL
+        AND r."expiresAt" > NOW();
+    `),
+    ordersRefunded: await prisma.order.count({ where: { eventId, status: "refunded" } }),
+    ordersCanceled: await prisma.order.count({ where: { eventId, status: "canceled" } }),
+    ordersExpired: await prisma.order.count({ where: { eventId, status: "expired" } }),
     revenuePaid,
     emailFailures,
-    invariantViolations: failed.map((f) => (f.detail ? `${f.label} (${f.detail})` : f.label))
+    invariantViolations: failed.map((f) => ({ key: f.label, violations: f.violations }))
   };
 }
 
@@ -221,7 +245,7 @@ verify()
   .catch((error) => {
     const summary: VerifySummary = {
       ok: false,
-      invariantViolations: ["verify.runtime.error"],
+      invariantViolations: [{ key: "verify.runtime.error", violations: 1 }],
       error: error instanceof Error ? error.message : String(error)
     };
     printResult(summary);
