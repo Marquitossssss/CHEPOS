@@ -4,6 +4,7 @@ import { BrowserRouter, Link, Route, Routes, useNavigate } from "react-router-do
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./api/client";
 import { EventActivityPage } from "./pages/EventActivityPage";
+import { EventDashboardPage } from "./pages/EventDashboardPage";
 
 const qc = new QueryClient();
 
@@ -33,7 +34,7 @@ function Dashboard() {
       <ul>
         {(events ?? []).map((event) => (
           <li key={event.id}>
-            {event.name} - <Link to={`/dashboard/events/${event.id}/activity`}>Actividad</Link>
+            {event.name} - <Link to={`/dashboard/events/${event.id}/activity`}>Actividad</Link> | <Link to={`/organizers/${organizers?.[0]?.slug}/events/${event.slug}/dashboard`}>Control Panel</Link>
           </li>
         ))}
       </ul>
@@ -66,6 +67,7 @@ function App() {
         <Route path="/" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/dashboard/events/:eventId/activity" element={<EventActivityPage />} />
+        <Route path="/organizers/:organizerSlug/events/:eventSlug/dashboard" element={<EventDashboardPage />} />
         <Route path="/events/new" element={<CreateEvent />} />
         <Route path="/buy" element={<PublicBuy />} />
         <Route path="/checkin" element={<Checkin />} />

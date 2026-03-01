@@ -24,6 +24,7 @@ import {
 import { ensureNotReplay } from "./modules/payments/webhook-idempotency.js";
 import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
+import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
 
 const app = Fastify({ logger: true });
 
@@ -170,6 +171,8 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
   if (ticket.status === "checked_in") return { valid: false, reason: "Ya utilizado", ticket };
   return { valid: true, ticket };
 }
+
+registerDashboardRoutes(app, verifyAuth);
 
 app.get("/health", async () => ({ ok: true }));
 
