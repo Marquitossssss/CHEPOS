@@ -60,11 +60,11 @@ case "$MODE" in
     if [ "$SEED_ON_START" = "true" ]; then
       pnpm db:seed
     fi
-    node dist/server.js
+    node dist/src/server.js
     ;;
   worker)
     pnpm exec prisma migrate deploy
-    node dist/workers/notificationsWorker.js
+    node dist/src/workers/notificationsWorker.js
     ;;
   test)
     pnpm exec prisma migrate deploy

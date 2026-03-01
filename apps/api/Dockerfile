@@ -34,6 +34,7 @@ RUN apk add --no-cache openssl
 RUN npm install -g pnpm@9.12.0
 
 COPY --from=builder /opt/api ./
+COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /app/apps/api/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
