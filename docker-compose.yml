@@ -47,6 +47,10 @@ services:
       PAYMENTS_WEBHOOK_SECRET: ${PAYMENTS_WEBHOOK_SECRET:-ci_webhook_secret_min_24_chars}
       API_PORT: 3000
       SEED_ON_START: ${SEED_ON_START:-false}
+      SEED_PROFILE: ${SEED_PROFILE:-minimal}
+      SEED_OWNER_EMAIL: ${SEED_OWNER_EMAIL:-owner@articket.local}
+      SEED_OWNER_PASSWORD: ${SEED_OWNER_PASSWORD:-afaafc29a40aa}
+      SEED_BCRYPT_COST: ${SEED_BCRYPT_COST:-12}
     depends_on:
       - postgres
       - redis
@@ -126,6 +130,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      SEED_PROFILE: ${SEED_PROFILE:-minimal}
+      SEED_OWNER_EMAIL: ${SEED_OWNER_EMAIL:-owner@articket.local}
+      SEED_OWNER_PASSWORD: ${SEED_OWNER_PASSWORD:-afaafc29a40aa}
+      SEED_BCRYPT_COST: ${SEED_BCRYPT_COST:-12}
     depends_on:
       - postgres
     command:
