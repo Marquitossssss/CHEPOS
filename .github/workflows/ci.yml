@@ -80,6 +80,12 @@ jobs:
           node -p "require('./package.json').packageManager || 'no packageManager field'"
           head -n 20 pnpm-lock.yaml
 
+      - name: debug pnpm version
+        run: |
+          which pnpm
+          pnpm -v
+          node -v
+
       - name: install dependencies
         run: pnpm install --frozen-lockfile
 
