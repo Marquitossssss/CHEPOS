@@ -79,8 +79,16 @@ jobs:
       - name: seed demo_rich
         run: pnpm -w db:seed
 
-      - name: verify demo_rich invariants
-        run: pnpm -w seed:verify
+      - name: verify demo_rich invariants (json)
+        run: pnpm -w seed:verify -- --json > seed-verify.json
+
+      - name: upload seed verification artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-verify-demo-rich
+          path: seed-verify.json
+          if-no-files-found: error
 
   ci:
     runs-on: ubuntu-latest
