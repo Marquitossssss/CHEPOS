@@ -4,11 +4,12 @@ import { prisma } from "../../lib/prisma.js";
 import { fetchLatePaymentOutboxSummary } from "./latePaymentOutboxSummary.js";
 
 describe("fetchLatePaymentOutboxSummary", () => {
-  it.skipIf(!process.env.DATABASE_URL)("returns pending count + latest retry/error per case", async () => {
+  it("returns pending count + latest retry/error per case", async () => {
     const caseId = `00000000-0000-0000-0000-${Date.now().toString().slice(-12)}`;
 
     await prisma.domainEventOutbox.deleteMany({ where: { aggregateId: caseId } });
 
+    const createdAtBase = new Date();
     await prisma.domainEventOutbox.createMany({
       data: [
         {
@@ -18,7 +19,8 @@ describe("fetchLatePaymentOutboxSummary", () => {
           payload: { step: 1 },
           retryCount: 0,
           lastError: null,
-          dispatchedAt: new Date()
+          dispatchedAt: new Date(createdAtBase.getTime() + 1_000),
+          createdAt: new Date(createdAtBase.getTime() - 1_000)
         },
         {
           eventName: "LATE_PAYMENT_CASE_RESOLVED",
@@ -27,7 +29,8 @@ describe("fetchLatePaymentOutboxSummary", () => {
           payload: { step: 2 },
           retryCount: 2,
           lastError: "worker timeout",
-          dispatchedAt: null
+          dispatchedAt: null,
+          createdAt: new Date(createdAtBase.getTime() + 1_000)
         }
       ]
     });
