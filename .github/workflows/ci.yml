@@ -95,16 +95,21 @@ jobs:
           pnpm --filter @articket/api ls prisma @prisma/client --depth 0 || true
 
       - name: prisma generate
-        run: pnpm --filter @articket/api exec prisma generate
+        run: |
+          cd apps/api
+          pnpm exec prisma generate
 
       - name: sanity check prisma client generated
-        run: pnpm --filter @articket/api exec node -e "require('@prisma/client'); console.log('prisma client load ok')"
+        run: |
+          cd apps/api
+          node -e "require('@prisma/client'); console.log('prisma client load ok')"
 
       - name: migrate
         run: pnpm -w db:migrate
 
       - name: debug prisma resolution before seed
         run: |
+          cd apps/api
           node -p "process.cwd()"
           node -p "require.resolve('@prisma/client')"
 
