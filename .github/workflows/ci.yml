@@ -124,7 +124,8 @@ jobs:
         run: pnpm -w db:seed
 
       - name: verify demo_rich invariants (json)
-        run: pnpm -w seed:verify -- --json > seed-verify.json
+        run: |
+          pnpm -w --silent seed:verify -- --json > seed-verify.json
 
       - name: verify demo_rich invariants (human)
         if: always()
