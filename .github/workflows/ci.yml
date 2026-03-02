@@ -107,6 +107,11 @@ jobs:
       - name: migrate
         run: pnpm -w db:migrate
 
+      - name: debug prisma resolution before seed
+        run: |
+          node -p "process.cwd()"
+          node -p "require.resolve('@prisma/client')"
+
       - name: seed demo_rich
         run: pnpm -w db:seed
 
