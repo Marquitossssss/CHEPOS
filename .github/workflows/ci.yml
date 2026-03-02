@@ -132,10 +132,6 @@ jobs:
           test -s seed-verify.json || (echo "seed-verify.json is empty" && exit 1)
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('seed-verify.json','utf8')); console.log('seed-verify.json parse ok');"
 
-      - name: debug seed-verify json head
-        if: always()
-        run: head -n 2 seed-verify.json || true
-
       - name: verify demo_rich invariants (human)
         if: always()
         run: pnpm -w seed:verify > seed-verify.txt || true
@@ -150,18 +146,18 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Seed verify (demo_rich)\n- seed-verify.json missing\n');
             process.exit(0);
           }
-          const p = JSON.parse(fs.readFileSync('seed-verify.json','utf8'));
+          const payload = JSON.parse(fs.readFileSync('seed-verify.json','utf8'));
           let s = '## Seed verify (demo_rich)\n';
-          s += `- ok: ${p.ok}\n`;
-          s += `- events: ${p.events}\n`;
-          s += `- orders: ${p.orders} (paid: ${p.ordersPaid}, refunded: ${p.ordersRefunded}, canceled: ${p.ordersCanceled}, expired: ${p.ordersExpired})\n`;
-          s += `- tickets: ${p.tickets} (issued: ${p.ticketsIssued}, checkedIn: ${p.ticketsCheckedIn})\n`;
-          s += `- reservedActive: ${p.reservedActive}\n`;
-          s += `- revenuePaid: ${p.revenuePaid}\n`;
-          s += `- emailFailures: ${p.emailFailures}\n`;
-          if (p.invariantViolations?.length) {
+          s += `- ok: ${payload.ok}\n`;
+          s += `- events: ${payload.events}\n`;
+          s += `- orders: ${payload.orders} (paid: ${payload.ordersPaid}, refunded: ${payload.ordersRefunded}, canceled: ${payload.ordersCanceled}, expired: ${payload.ordersExpired})\n`;
+          s += `- tickets: ${payload.tickets} (issued: ${payload.ticketsIssued}, checkedIn: ${payload.ticketsCheckedIn})\n`;
+          s += `- reservedActive: ${payload.reservedActive}\n`;
+          s += `- revenuePaid: ${payload.revenuePaid}\n`;
+          s += `- emailFailures: ${payload.emailFailures}\n`;
+          if (payload.invariantViolations?.length) {
             s += `- invariantViolations:\n`;
-            for (const v of p.invariantViolations) {
+            for (const v of payload.invariantViolations) {
               s += ` - ${v.key}: ${v.violations}\n`;
             }
           } else {
