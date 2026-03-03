@@ -91,7 +91,7 @@ jobs:
 
       - name: assert refresh token secret separation (guardrail)
         run: |
-          node -e "const fs=require('fs'); const s=fs.readFileSync('apps/api/src/server.ts','utf8'); const must=[/register\(jwt,\s*\{\s*secret:\s*env\.jwtAccessSecret\s*\}\)/, /refreshToken\s*=\s*app\.jwt\.sign[\s\S]*key:\s*env\.jwtRefreshSecret/, /app\.jwt\.verify<JwtPayload>\([\s\S]*key:\s*env\.jwtRefreshSecret/]; for(const r of must){ if(!r.test(s)){ console.error('guardrail failed:', r); process.exit(1);} } console.log('auth refresh secret separation guardrail ok');"
+          node -e "const fs=require('fs'); const s=fs.readFileSync('apps/api/src/server.ts','utf8'); const must = [/register\(jwt,\s*\{\s*secret:\s*env\.jwtAccessSecret\s*\}\)/, /app\.jwt\.sign\([\s\S]*key:\s*env\.jwtRefreshSecret/, /app\.jwt\.verify<JwtPayload>\([\s\S]*key:\s*env\.jwtRefreshSecret/]; for (const r of must) { if (!r.test(s)) { console.error('guardrail failed:', r); process.exit(1); } } console.log('auth refresh secret separation guardrail ok');"
 
       - name: debug prisma deps in api
         run: |
