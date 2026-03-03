@@ -13,7 +13,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "reservation:cleaner": "tsx src/jobs/releaseExpiredReservations.ts",
     "worker:notifications": "tsx src/workers/notificationsWorker.ts",
-    "start:worker": "node dist/workers/notificationsWorker.js"
+    "worker:reconcile-payments": "tsx src/workers/reconcilePaymentsWorker.ts",
+    "start:worker": "node dist/workers/notificationsWorker.js",
+    "start:worker:reconcile-payments": "node dist/workers/reconcilePaymentsWorker.js"
   },
   "dependencies": {
     "@articket/shared": "workspace:*",

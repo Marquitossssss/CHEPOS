@@ -69,3 +69,15 @@ export const paymentsPaidTransitionTotal = getOrCreateCounter(
   "Total de resultados de transición a paid",
   ["result"]
 );
+
+export const paymentsReconcileRunsTotal = getOrCreateCounter(
+  "payments_reconcile_runs_total",
+  "Runs de reconciliación de pagos",
+  ["status"]
+);
+
+export const paymentsReconcileProcessedTotal = getOrCreateCounter(
+  "payments_reconcile_processed_total",
+  "Resultados de reconciliación de pagos",
+  ["outcome"]
+);

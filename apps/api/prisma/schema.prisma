@@ -56,6 +56,8 @@ enum DomainEventType {
   LATE_PAYMENT_DETECTED
   LATE_PAYMENT_CASE_CREATED
   LATE_PAYMENT_CASE_RESOLVED
+  PAYMENT_RECONCILED_PAID
+  PAYMENT_RECONCILED_FAILED
   MANUAL_OVERRIDE_EXECUTED
 }
 
@@ -197,6 +199,8 @@ model Order {
   latePaymentCases           LatePaymentCase[]
   paymentProviderEvents      PaymentProviderEvent[]
   paymentIdempotencyKeys     PaymentIdempotencyKey[]
+  paymentAttempts            PaymentAttempt[]
+  webhookReceipts            WebhookReceipt[]
   latePaymentReviewRequired  Boolean                @default(false)
   confirmationEmailSentAt    DateTime?
   confirmationEmailMessageId String?
@@ -283,6 +287,44 @@ model Payment {
 
   @@unique([provider, providerRef])
   @@index([orderId, createdAt])
+}
+
+model PaymentAttempt {
+  id                String   @id @default(uuid())
+  orderId            String?  @db.Uuid
+  provider           String
+  providerPaymentId  String
+  status             String
+  amountCents        Int?
+  currency           String?
+  rawPayload         Json
+  correlationId      String?
+  firstSeenAt        DateTime @default(now())
+  lastSeenAt         DateTime @default(now())
+  reconciledAt       DateTime?
+  order              Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, providerPaymentId])
+  @@index([orderId, lastSeenAt])
+  @@index([status, lastSeenAt])
+}
+
+model WebhookReceipt {
+  id                String   @id @default(uuid())
+  provider          String
+  providerEventId   String
+  providerPaymentId String?
+  orderId           String?  @db.Uuid
+  payloadHash       String
+  signatureValid    Boolean  @default(false)
+  rawPayload        Json
+  receivedAt        DateTime @default(now())
+  correlationId     String?
+  order             Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([provider, providerPaymentId, receivedAt])
+  @@index([orderId, receivedAt])
 }
 
 model ProcessedWebhookEvent {

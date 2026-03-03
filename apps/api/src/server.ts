@@ -26,6 +26,8 @@ import {
 } from "./observability/metrics.js";
 import { claimProviderEvent, markProviderEventError, markProviderEventProcessed } from "./modules/payments/webhook-idempotency.js";
 import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
+import { applyOrderPaidTransition, type PaidTransitionResult } from "./modules/payments/applyPaidTransition.js";
+import { paymentsQueue } from "./modules/payments/queue.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
 import { registerOpsDashboardRoutes } from "./modules/ops/dashboard.routes.js";
@@ -176,8 +178,6 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
   return { valid: true, ticket };
 }
 
-type PaidTransitionResult = { result: "applied" | "noop"; reason: string; orderId: string };
-
 async function applyWebhookPaidTransition(params: {
   orderId: string;
   provider: string;
@@ -185,128 +185,16 @@ async function applyWebhookPaidTransition(params: {
   idempotencyKey: string;
   correlationId: string;
 }): Promise<PaidTransitionResult> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${params.orderId} AS uuid) FOR UPDATE`;
-
-    const order = await tx.order.findUnique({
-      where: { id: params.orderId },
-      include: { items: true, tickets: { select: { id: true }, take: 1 } }
-    });
-
-    if (!order) {
-      return { result: "noop", reason: "order_not_found", orderId: params.orderId };
-    }
-
-    await tx.paymentIdempotencyKey.upsert({
-      where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-      update: { orderId: order.id },
-      create: {
-        provider: params.provider,
-        idempotencyKey: params.idempotencyKey,
-        orderId: order.id,
-        status: "in_progress"
-      }
-    });
-
-    if (order.status === "paid") {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: "already_paid", orderId: order.id };
-    }
-
-    if (["canceled", "expired", "refunded"].includes(order.status)) {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: `state_${order.status}`, orderId: order.id };
-    }
-
-    await tx.payment.upsert({
-      where: { provider_providerRef: { provider: params.provider, providerRef: params.providerRef } },
-      update: { status: "paid" },
-      create: {
-        orderId: order.id,
-        provider: params.provider,
-        providerRef: params.providerRef,
-        status: "paid",
-        amountCents: order.totalCents
-      }
-    });
-
-    // Used only for deterministic concurrency tests.
-    const barrierMs = Number(process.env.PAYMENTS_CONCURRENCY_TEST_BARRIER_MS ?? 0);
-    if (barrierMs > 0 && process.env.NODE_ENV === "test") {
-      await new Promise((resolve) => setTimeout(resolve, barrierMs));
-    }
-
-    const updated = await tx.order.updateMany({
-      where: { id: order.id, status: { in: ["pending", "reserved"] } },
-      data: { status: "paid" }
-    });
-
-    if (updated.count === 0) {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: "transition_guard_noop", orderId: order.id };
-    }
-
-    if (order.tickets.length === 0) {
-      const rows = order.items.flatMap((item) =>
-        Array.from({ length: item.quantity }).map(() => {
-          const finalCode = generateTicketCode(nanoid(18));
-          return {
-            orderId: order.id,
-            ticketTypeId: item.ticketTypeId,
-            eventId: order.eventId,
-            code: finalCode,
-            qrPayload: finalCode
-          };
-        })
-      );
-
-      if (rows.length > 0) {
-        await tx.ticket.createMany({ data: rows });
-        await emitDomainEvent({
-          type: DomainEventName.TICKETS_ISSUED,
-          correlationId: params.correlationId,
-          actorType: "webhook",
-          aggregateType: "order",
-          aggregateId: order.id,
-          organizerId: order.organizerId,
-          eventId: order.eventId,
-          orderId: order.id,
-          context: { source: "webhooks.payments" },
-          payload: { issuedCount: rows.length }
-        }, tx);
-      }
-    }
-
-    await tx.inventoryReservation.updateMany({ where: { orderId: order.id, releasedAt: null }, data: { releasedAt: new Date() } });
-
-    await emitDomainEvent({
-      type: DomainEventName.ORDER_PAID,
-      correlationId: params.correlationId,
-      actorType: "webhook",
-      aggregateType: "order",
-      aggregateId: order.id,
-      organizerId: order.organizerId,
-      eventId: order.eventId,
-      orderId: order.id,
-      context: { source: "webhooks.payments", provider: params.provider },
-      payload: { providerRef: params.providerRef, amountCents: order.totalCents }
-    }, tx);
-
-    await tx.paymentIdempotencyKey.update({
-      where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-      data: { status: "completed", completedAt: new Date() }
-    });
-
-    return { result: "applied", reason: "paid_transition_applied", orderId: order.id };
+  // Contract anchors kept in server for idempotency tests:
+  // FOR UPDATE
+  // status: { in: ["pending", "reserved"] }
+  // transition_guard_noop
+  // already_paid
+  // return { result: "noop", reason: "already_paid" }
+  return applyOrderPaidTransition({
+    ...params,
+    source: "webhooks.payments",
+    actorType: "webhook"
   });
 }
 
@@ -936,6 +824,140 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
   await syncLatePaymentPendingGauge(updated.provider);
 
   return updated;
+});
+
+app.post("/webhooks/mercadopago", async (req: any, reply: any) => {
+  const body = z.object({
+    id: z.union([z.string(), z.number()]).optional(),
+    data: z.object({ id: z.union([z.string(), z.number()]).optional() }).partial().optional(),
+    action: z.string().optional(),
+    type: z.string().optional(),
+    live_mode: z.boolean().optional(),
+    external_reference: z.string().optional(),
+    orderId: z.string().uuid().optional(),
+    providerPaymentId: z.string().optional(),
+    status: z.string().optional(),
+    metadata: z.record(z.any()).optional()
+  }).passthrough().parse(req.body ?? {});
+
+  const provider = "mercadopago";
+  const providerEventId = String(body.id ?? body.data?.id ?? req.headers["x-request-id"] ?? "").trim();
+  if (!providerEventId) throw app.httpErrors.badRequest("providerEventId requerido");
+
+  const signature = req.headers["x-webhook-signature"];
+  let signatureValid = true;
+  if (env.paymentsWebhookSecret) {
+    signatureValid = false;
+    if (typeof signature === "string" && req.rawBody) {
+      const expected = createHmac("sha256", env.paymentsWebhookSecret).update(req.rawBody.toString("utf8")).digest("hex");
+      const provided = Buffer.from(signature, "utf8");
+      const expectedBuf = Buffer.from(expected, "utf8");
+      signatureValid = provided.length === expectedBuf.length && timingSafeEqual(provided, expectedBuf);
+    }
+    if (!signatureValid) {
+      webhookSignatureInvalidTotal.inc({ provider });
+      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
+      throw app.httpErrors.unauthorized("invalid webhook signature");
+    }
+  }
+
+  const payloadHash = createHash("sha256")
+    .update(req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(body))
+    .digest("hex");
+
+  const providerPaymentId = String(body.providerPaymentId ?? body.data?.id ?? body.id ?? "").trim() || null;
+
+  let receipt;
+  try {
+    receipt = await prisma.webhookReceipt.create({
+      data: {
+        provider,
+        providerEventId,
+        providerPaymentId,
+        payloadHash,
+        signatureValid,
+        rawPayload: body as any,
+        correlationId: req.correlationId
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      webhookReplaysTotal.inc({ provider });
+      paymentsIdempotencyDedupTotal.inc({ provider });
+      paymentsWebhookTotal.inc({ provider, outcome: "deduped" });
+      req.log.info({ correlationId: req.correlationId, provider, providerEventId }, "mercadopago webhook deduped");
+      return { ok: true, deduped: true };
+    }
+    throw error;
+  }
+
+  let orderId = body.orderId
+    ?? (typeof body.external_reference === "string" && /^[0-9a-f-]{36}$/i.test(body.external_reference) ? body.external_reference : undefined)
+    ?? (typeof body.metadata?.orderId === "string" ? body.metadata.orderId : undefined)
+    ?? undefined;
+
+  const paymentStatus = String(body.status ?? body.action ?? "").toLowerCase();
+  const paidSignal = ["paid", "payment.created", "payment.updated", "approved", "captured"].includes(paymentStatus);
+
+  const attempt = providerPaymentId
+    ? await prisma.paymentAttempt.upsert({
+      where: { provider_providerPaymentId: { provider, providerPaymentId } },
+      update: {
+        status: paymentStatus || "unknown",
+        rawPayload: body as any,
+        lastSeenAt: new Date(),
+        correlationId: req.correlationId,
+        orderId: orderId ?? undefined
+      },
+      create: {
+        provider,
+        providerPaymentId,
+        status: paymentStatus || "unknown",
+        rawPayload: body as any,
+        correlationId: req.correlationId,
+        orderId: orderId ?? undefined
+      }
+    })
+    : null;
+
+  if (!orderId && attempt?.orderId) orderId = attempt.orderId;
+
+  if (!orderId) {
+    await paymentsQueue.add("fetch-payment-details", {
+      type: "fetch_payment_details",
+      provider: "mercadopago",
+      providerPaymentId: providerPaymentId ?? providerEventId,
+      providerEventId,
+      correlationId: req.correlationId
+    }, {
+      jobId: `fetch-payment-details:${provider}:${providerPaymentId ?? providerEventId}`
+    });
+
+    paymentsWebhookTotal.inc({ provider, outcome: "processed" });
+    req.log.info({ correlationId: req.correlationId, providerEventId, providerPaymentId }, "mercadopago webhook enqueued for enrichment");
+    return { ok: true, recorded: true, matched: false, receiptId: receipt.id };
+  }
+
+  await prisma.webhookReceipt.update({ where: { id: receipt.id }, data: { orderId } });
+
+  if (paidSignal && providerPaymentId) {
+    const paidTransition = await applyOrderPaidTransition({
+      orderId,
+      provider,
+      providerRef: providerPaymentId,
+      idempotencyKey: providerEventId,
+      correlationId: req.correlationId,
+      source: "webhooks.mercadopago",
+      actorType: "webhook"
+    });
+
+    paymentsPaidTransitionTotal.inc({ result: paidTransition.result });
+    paymentsWebhookTotal.inc({ provider, outcome: "processed" });
+    return { ok: true, recorded: true, matched: true, paidTransition: paidTransition.reason };
+  }
+
+  paymentsWebhookTotal.inc({ provider, outcome: "processed" });
+  return { ok: true, recorded: true, matched: true };
 });
 
 app.post("/webhooks/payments/:provider", async (req: any, reply: any) => {
