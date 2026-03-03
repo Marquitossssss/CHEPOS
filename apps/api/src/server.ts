@@ -28,6 +28,7 @@ import { claimProviderEvent, markProviderEventError, markProviderEventProcessed 
 import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
+import { registerOpsDashboardRoutes } from "./modules/ops/dashboard.routes.js";
 
 const app = Fastify({ logger: true });
 
@@ -310,6 +311,7 @@ async function applyWebhookPaidTransition(params: {
 }
 
 registerDashboardRoutes(app, verifyAuth);
+registerOpsDashboardRoutes(app, verifyAuth);
 
 app.get("/health", async () => ({ ok: true }));
 

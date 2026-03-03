@@ -36,7 +36,7 @@ function Login() {
 }
 
 function Dashboard() {
-  const { data: organizers } = useQuery({ queryKey: ["organizers"], queryFn: () => api<any[]>("/organizers") });
+  const { data: organizers, isLoading: orgLoading } = useQuery({ queryKey: ["organizers"], queryFn: () => api<any[]>("/organizers") });
   const organizerId = organizers?.[0]?.id;
   const organizer = organizers?.[0];
 
@@ -46,10 +46,18 @@ function Dashboard() {
     queryFn: () => api<any[]>(`/events?organizerId=${organizerId}`)
   });
 
+  const opsDashboard = useQuery({
+    queryKey: ["ops-dashboard", organizerId],
+    enabled: Boolean(organizerId),
+    queryFn: () => api<any>(`/ops/dashboard?organizerId=${organizerId}`)
+  });
+
+  const loading = orgLoading || opsDashboard.isLoading;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Dashboard</h2>
+        <h2 className="text-2xl font-semibold">Dashboard Operativo</h2>
         <Link to="/events/new" className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
           Crear evento
         </Link>
@@ -70,12 +78,50 @@ function Dashboard() {
         ) : (
           <p className="text-sm text-slate-600">No hay organizador disponible.</p>
         )}
-
-        <details className="mt-3 text-xs text-slate-500">
-          <summary className="cursor-pointer">Debug JSON</summary>
-          <pre className="mt-2 overflow-auto rounded bg-slate-50 p-2">{JSON.stringify(organizers, null, 2)}</pre>
-        </details>
       </Card>
+
+      {loading ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card><div className="h-20 animate-pulse rounded bg-slate-100" /></Card>
+          <Card><div className="h-20 animate-pulse rounded bg-slate-100" /></Card>
+          <Card><div className="h-20 animate-pulse rounded bg-slate-100" /></Card>
+        </div>
+      ) : opsDashboard.isError ? (
+        <Card className="border-red-200 bg-red-50 text-red-700">No se pudo cargar el dashboard operativo. Reintentar.</Card>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Card>
+              <h3 className="text-sm font-semibold text-slate-600">Ventas 24h</h3>
+              <p className="mt-1 text-2xl font-bold">${((opsDashboard.data?.window24h?.grossAmount ?? 0) / 100).toLocaleString("es-AR")}</p>
+              <p className="text-xs text-slate-500">Orders: {opsDashboard.data?.window24h?.ordersTotal ?? 0} · Paid: {opsDashboard.data?.window24h?.paid ?? 0}</p>
+            </Card>
+            <Card>
+              <h3 className="text-sm font-semibold text-slate-600">Ventas 7d</h3>
+              <p className="mt-1 text-2xl font-bold">${((opsDashboard.data?.window7d?.grossAmount ?? 0) / 100).toLocaleString("es-AR")}</p>
+              <p className="text-xs text-slate-500">Orders: {opsDashboard.data?.window7d?.ordersTotal ?? 0} · Paid: {opsDashboard.data?.window7d?.paid ?? 0}</p>
+            </Card>
+            <Card>
+              <h3 className="text-sm font-semibold text-slate-600">Riesgo</h3>
+              <p className="mt-1 text-2xl font-bold">{opsDashboard.data?.risk?.latePaymentCases ?? 0}</p>
+              <p className="text-xs text-slate-500">Reservas por expirar: {opsDashboard.data?.risk?.reservationsExpiringSoon ?? 0}</p>
+            </Card>
+          </div>
+
+          <Card>
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">Última actividad</h3>
+            <ul className="space-y-2 text-sm">
+              {(opsDashboard.data?.activity ?? []).map((item: any) => (
+                <li key={item.id} className="rounded border border-slate-200 px-3 py-2">
+                  <span className="font-medium">{item.type}</span> · {item.aggregateId}
+                  <div className="text-xs text-slate-500">{new Date(item.createdAt).toLocaleString()}</div>
+                </li>
+              ))}
+              {(opsDashboard.data?.activity ?? []).length === 0 && <li className="text-slate-500">Sin actividad reciente</li>}
+            </ul>
+          </Card>
+        </>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {(events ?? []).map((event) => (
