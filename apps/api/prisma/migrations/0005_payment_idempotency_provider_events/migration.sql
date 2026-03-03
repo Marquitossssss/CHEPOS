@@ -5,7 +5,7 @@ CREATE TABLE "PaymentProviderEvent" (
   "id" TEXT NOT NULL,
   "provider" TEXT NOT NULL,
   "providerEventId" TEXT NOT NULL,
-  "orderId" TEXT,
+  "orderId" UUID,
   "payloadHash" TEXT NOT NULL,
   "status" "PaymentProviderEventStatus" NOT NULL DEFAULT 'received',
   "attempts" INTEGER NOT NULL DEFAULT 0,
