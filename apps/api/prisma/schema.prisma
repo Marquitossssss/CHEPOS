@@ -74,6 +74,20 @@ enum DomainAggregateType {
   notification
 }
 
+enum PaymentProviderEventStatus {
+  received
+  processed
+  deduped
+  invalid
+  error
+}
+
+enum PaymentIdempotencyStatus {
+  in_progress
+  completed
+  failed
+}
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -180,6 +194,8 @@ model Order {
   reservations               InventoryReservation[]
   emailEvents                EmailEvent[]
   latePaymentCases           LatePaymentCase[]
+  paymentProviderEvents      PaymentProviderEvent[]
+  paymentIdempotencyKeys     PaymentIdempotencyKey[]
   latePaymentReviewRequired  Boolean                @default(false)
   confirmationEmailSentAt    DateTime?
   confirmationEmailMessageId String?
@@ -276,6 +292,38 @@ model ProcessedWebhookEvent {
 
   @@unique([provider, externalEventId])
   @@index([processedAt])
+}
+
+model PaymentProviderEvent {
+  id              String                     @id @default(uuid())
+  provider        String
+  providerEventId String
+  orderId         String?
+  payloadHash     String
+  status          PaymentProviderEventStatus @default(received)
+  receivedAt      DateTime                   @default(now())
+  processedAt     DateTime?
+  errorMessage    String?
+  order           Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([status, receivedAt])
+  @@index([orderId, receivedAt])
+}
+
+model PaymentIdempotencyKey {
+  id             String                   @id @default(uuid())
+  provider       String
+  idempotencyKey String
+  orderId        String?
+  status         PaymentIdempotencyStatus @default(in_progress)
+  createdAt      DateTime                 @default(now())
+  completedAt    DateTime?
+  order          Order?                   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([orderId, createdAt])
 }
 
 model LatePaymentCase {
