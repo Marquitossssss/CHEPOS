@@ -49,7 +49,7 @@ function Dashboard() {
   const opsDashboard = useQuery({
     queryKey: ["ops-dashboard", organizerId],
     enabled: Boolean(organizerId),
-    queryFn: () => api<any>("/ops/dashboard")
+    queryFn: () => api<any>(`/organizers/${organizerId}/ops/dashboard`)
   });
 
   const loading = orgLoading || opsDashboard.isLoading;

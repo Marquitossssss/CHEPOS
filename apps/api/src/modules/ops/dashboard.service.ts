@@ -4,9 +4,6 @@ type JwtPayload = { userId: string; email: string };
 
 type DbClient = typeof prisma;
 
-type MembershipResolver = {
-  findFirst: DbClient["membership"]["findFirst"];
-};
 export type OpsDashboardDTO = {
   window24h: {
     ordersTotal: number;
@@ -14,13 +11,13 @@ export type OpsDashboardDTO = {
     pending: number;
     expired: number;
     grossAmount: number;
-    netAmount: number;
+    subtotalAmountCents: number;
   };
   window7d: {
     ordersTotal: number;
     paid: number;
     grossAmount: number;
-    netAmount: number;
+    subtotalAmountCents: number;
   };
   risk: {
     latePaymentCases: number;
@@ -34,19 +31,13 @@ export type OpsDashboardDTO = {
   }>;
 };
 
-async function resolveOrganizerFromAuthContext(userId: string, membershipRepo: MembershipResolver): Promise<string> {
-  const membership = await membershipRepo.findFirst({
-    where: { userId },
-    orderBy: { organizerId: "asc" },
-    select: { organizerId: true }
+export async function buildOpsDashboard(user: JwtPayload, organizerId: string, db: DbClient = prisma): Promise<OpsDashboardDTO> {
+  const membership = await db.membership.findUnique({
+    where: { userId_organizerId: { userId: user.userId, organizerId } },
+    select: { role: true }
   });
 
   if (!membership) throw new Error("FORBIDDEN");
-  return membership.organizerId;
-}
-
-export async function buildOpsDashboard(user: JwtPayload, db: DbClient = prisma): Promise<OpsDashboardDTO> {
-  const organizerId = await resolveOrganizerFromAuthContext(user.userId, db.membership);
 
   const now = new Date();
   const from24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -124,8 +115,8 @@ export async function buildOpsDashboard(user: JwtPayload, db: DbClient = prisma)
   const c7 = new Map(window7dOrders.map((row) => [row.status, row._count._all]));
 
   // Amount semantics:
-  // - grossAmount: SUM(Order.totalCents) for paid orders in window
-  // - netAmount:   SUM(Order.subtotalCents) for paid orders in window
+  // - grossAmount:          SUM(Order.totalCents) for paid orders in window
+  // - subtotalAmountCents:  SUM(Order.subtotalCents) for paid orders in window
   const gross24h = window24hPaidAmounts._sum.totalCents ?? 0;
   const gross7d = window7dPaidAmounts._sum.totalCents ?? 0;
   const net24h = window24hPaidAmounts._sum.subtotalCents ?? 0;
@@ -138,13 +129,13 @@ export async function buildOpsDashboard(user: JwtPayload, db: DbClient = prisma)
       pending: c24.get("pending") ?? 0,
       expired: c24.get("expired") ?? 0,
       grossAmount: gross24h,
-      netAmount: net24h
+      subtotalAmountCents: net24h
     },
     window7d: {
       ordersTotal: window7dOrders.reduce((acc, row) => acc + row._count._all, 0),
       paid: c7.get("paid") ?? 0,
       grossAmount: gross7d,
-      netAmount: net7d
+      subtotalAmountCents: net7d
     },
     risk: {
       latePaymentCases,

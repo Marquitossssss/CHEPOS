@@ -2,20 +2,26 @@ import { describe, expect, it } from "vitest";
 import { buildOpsDashboard } from "./dashboard.service.js";
 
 describe("buildOpsDashboard", () => {
-  it("forbids access when user has no organizer membership", async () => {
+  it("forbids cross-organizer access", async () => {
     const db: any = {
       membership: {
-        findFirst: async () => null
+        findUnique: async () => null
       }
     };
 
-    await expect(buildOpsDashboard({ userId: "u1", email: "x@test" }, db)).rejects.toThrow("FORBIDDEN");
+    await expect(
+      buildOpsDashboard(
+        { userId: "user-a", email: "a@test" },
+        "22222222-2222-2222-2222-222222222222",
+        db
+      )
+    ).rejects.toThrow("FORBIDDEN");
   });
 
   it("returns contract shape with empty-safe defaults", async () => {
     const db: any = {
       membership: {
-        findFirst: async () => ({ organizerId: "11111111-1111-1111-1111-111111111111" })
+        findUnique: async () => ({ role: "owner" })
       },
       order: {
         groupBy: async () => [],
@@ -32,7 +38,11 @@ describe("buildOpsDashboard", () => {
       }
     };
 
-    const result = await buildOpsDashboard({ userId: "u1", email: "x@test" }, db);
+    const result = await buildOpsDashboard(
+      { userId: "u1", email: "x@test" },
+      "11111111-1111-1111-1111-111111111111",
+      db
+    );
 
     expect(result).toEqual({
       window24h: {
@@ -41,13 +51,13 @@ describe("buildOpsDashboard", () => {
         pending: 0,
         expired: 0,
         grossAmount: 0,
-        netAmount: 0
+        subtotalAmountCents: 0
       },
       window7d: {
         ordersTotal: 0,
         paid: 0,
         grossAmount: 0,
-        netAmount: 0
+        subtotalAmountCents: 0
       },
       risk: {
         latePaymentCases: 0,
