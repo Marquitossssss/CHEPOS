@@ -125,12 +125,16 @@ jobs:
 
       - name: verify demo_rich invariants (json)
         run: |
-          pnpm -w --silent seed:verify -- --json | sed -n '/^[{\[]/,$p' | head -n 1 > seed-verify.json
+          pnpm -w --silent seed:verify -- --json > seed-verify.json
 
       - name: assert seed-verify.json parses
         run: |
           test -s seed-verify.json || (echo "seed-verify.json is empty" && exit 1)
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('seed-verify.json','utf8')); console.log('seed-verify.json parse ok');"
+
+      - name: assert seed-verify.json is single non-empty line
+        run: |
+          node -e "const fs=require('fs'); const s=fs.readFileSync('seed-verify.json','utf8'); const lines=s.split(/\r?\n/).filter(Boolean); if(lines.length!==1){console.error('seed-verify.json must contain exactly 1 non-empty line, got', lines.length); process.exit(1);} console.log('seed-verify.json single-line ok');"
 
       - name: verify demo_rich invariants (human)
         if: always()
