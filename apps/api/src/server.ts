@@ -185,7 +185,7 @@ async function applyWebhookPaidTransition(params: {
   correlationId: string;
 }): Promise<PaidTransitionResult> {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${params.orderId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${params.orderId} AS uuid) FOR UPDATE`;
 
     const order = await tx.order.findUnique({
       where: { id: params.orderId },
@@ -436,7 +436,7 @@ app.post("/checkout/reserve", async (req: any) => {
     let subtotal = 0;
 
     for (const item of body.items) {
-      await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = ${item.ticketTypeId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${item.ticketTypeId} AS uuid) FOR UPDATE`;
       const tt = await tx.ticketType.findUniqueOrThrow({ where: { id: item.ticketTypeId } });
       if (tt.eventId !== body.eventId) throw new Error("Ticket type invÃ¡lido");
       if (item.quantity > tt.maxPerOrder) throw new Error("Supera mÃ¡ximo por orden");
@@ -522,7 +522,7 @@ app.post("/checkout/confirm", async (req: any) => {
 
   try {
     const order = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${body.orderId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${body.orderId} AS uuid) FOR UPDATE`;
 
     const duplicatePayment = await tx.payment.findUnique({
       where: { provider_providerRef: { provider: "mock", providerRef: body.paymentReference } }
