@@ -30,7 +30,7 @@ type VerifySummary = {
 
 const DEMO_ORDER_PREFIX = "DEMO-ORDER-";
 const DEMO_TICKET_PREFIX = "DEMO-TICKET-";
-const asJson = process.argv.includes("--json");
+const jsonMode = process.argv.includes("--json");
 
 async function scalarInt(sql: string): Promise<number> {
   const rows = await prisma.$queryRawUnsafe<Array<{ value: bigint | number }>>(sql);
@@ -59,11 +59,12 @@ function printHuman(summary: VerifySummary) {
 }
 
 function printResult(summary: VerifySummary) {
-  if (asJson) {
-    console.log(JSON.stringify(summary));
-  } else {
-    printHuman(summary);
+  if (jsonMode) {
+    process.stdout.write(`${JSON.stringify(summary)}\n`);
+    return;
   }
+
+  printHuman(summary);
 }
 
 async function verify(): Promise<VerifySummary> {
