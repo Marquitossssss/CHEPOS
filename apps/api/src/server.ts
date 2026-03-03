@@ -339,8 +339,7 @@ app.post("/auth/login", async (req) => {
   }
   const accessToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, { expiresIn: "15m" });
   const refreshToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, {
-    expiresIn: "7d",
-    key: env.jwtRefreshSecret
+    expiresIn: "7d"
   });
   return { accessToken, refreshToken };
 });
