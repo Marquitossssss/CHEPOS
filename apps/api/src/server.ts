@@ -203,14 +203,15 @@ app.post("/auth/login", async (req) => {
   }
   const accessToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, { expiresIn: "15m" });
   const refreshToken = app.jwt.sign({ userId: user.id, email: user.email } as JwtPayload, {
-    expiresIn: "7d"
+    expiresIn: "7d",
+    key: env.jwtRefreshSecret
   });
   return { accessToken, refreshToken };
 });
 
 app.post("/auth/refresh", async (req) => {
   const body = z.object({ refreshToken: z.string() }).parse(req.body);
-  const payload = await app.jwt.verify<JwtPayload>(body.refreshToken);
+  const payload = await app.jwt.verify<JwtPayload>(body.refreshToken, { key: env.jwtRefreshSecret });
   const accessToken = app.jwt.sign({ userId: payload.userId, email: payload.email }, { expiresIn: "15m" });
   return { accessToken };
 });
