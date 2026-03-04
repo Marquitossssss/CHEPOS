@@ -24,9 +24,11 @@ enum OrderStatus {
   pending
   reserved
   paid
+  failed
   canceled
   expired
   refunded
+  paid_no_stock
 }
 
 enum LatePaymentCaseStatus {
@@ -56,6 +58,9 @@ enum DomainEventType {
   LATE_PAYMENT_DETECTED
   LATE_PAYMENT_CASE_CREATED
   LATE_PAYMENT_CASE_RESOLVED
+  PAYMENT_MARKED_FAILED
+  PAYMENT_MARKED_REFUNDED
+  PAYMENT_MARKED_NO_STOCK
   MANUAL_OVERRIDE_EXECUTED
 }
 

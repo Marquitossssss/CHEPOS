@@ -69,3 +69,9 @@ export const paymentWebhookRejectedTotal = getOrCreateCounter(
   "Total de webhooks de pago rechazados",
   ["provider", "reason"]
 );
+
+export const paymentEventIgnoredTotal = getOrCreateCounter(
+  "payment_event_ignored_total",
+  "Total de eventos de pago ignorados por guardas de estado",
+  ["reason"]
+);

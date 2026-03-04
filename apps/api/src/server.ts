@@ -18,12 +18,14 @@ import {
   latePaymentCasesPending,
   latePaymentCasesTotal,
   manualOverrideEntriesTotal,
+  paymentEventIgnoredTotal,
   paymentWebhookDedupedTotal,
   paymentWebhookReceivedTotal,
   paymentWebhookRejectedTotal
 } from "./observability/metrics.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
+import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
 
 const app = Fastify({ logger: true });
 
@@ -971,7 +973,7 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
   paymentWebhookReceivedTotal.inc({ provider, event_type: eventType });
 
   try {
-    await prisma.paymentEvent.create({
+    const created = await prisma.paymentEvent.create({
       data: {
         provider,
         providerEventId,
@@ -991,6 +993,28 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
       eventType,
       outcome: "stored"
     }, "payment webhook stored");
+
+    try {
+      const applyResult = await applyPaymentEvent(created.id, req.correlationId);
+      if (["terminal_guard", "unsupported_event_type", "unmatched"].includes(applyResult.outcome)) {
+        paymentEventIgnoredTotal.inc({ reason: applyResult.outcome });
+      }
+      req.log.info({
+        correlationId: req.correlationId,
+        provider,
+        providerEventId,
+        eventType,
+        outcome: applyResult.outcome
+      }, "payment event processed");
+    } catch (applyError: any) {
+      await prisma.paymentEvent.update({
+        where: { id: created.id },
+        data: {
+          processError: applyError instanceof Error ? applyError.message.slice(0, 1000) : String(applyError).slice(0, 1000)
+        }
+      });
+      req.log.error({ correlationId: req.correlationId, provider, providerEventId, err: applyError }, "payment event process error");
+    }
 
     return { ok: true, deduped: false };
   } catch (error: any) {
