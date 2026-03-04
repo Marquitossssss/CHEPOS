@@ -75,46 +75,25 @@ export async function applyPaymentEvent(paymentEventId: string, correlationId: s
     }
 
     if (target === "paid") {
-      const now = new Date();
-      const reservationExpired = !!order.reservedUntil && order.reservedUntil < now;
+      const reservationExpired = !!order.reservedUntil && order.reservedUntil < new Date();
 
       if (reservationExpired) {
-        let hasStock = true;
-        for (const item of order.items) {
-          await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${item.ticketTypeId} AS uuid) FOR UPDATE`;
-          const tt = await tx.ticketType.findUniqueOrThrow({ where: { id: item.ticketTypeId } });
-          const paid = await tx.orderItem.aggregate({
-            _sum: { quantity: true },
-            where: { ticketTypeId: tt.id, order: { status: "paid" } }
-          });
-          const activeReservations = await tx.inventoryReservation.aggregate({
-            _sum: { quantity: true },
-            where: { ticketTypeId: tt.id, releasedAt: null, expiresAt: { gt: now } }
-          });
-          const used = (paid._sum.quantity ?? 0) + (activeReservations._sum.quantity ?? 0);
-          if (used + item.quantity > tt.quota) {
-            hasStock = false;
-            break;
-          }
-        }
-
-        if (!hasStock) {
-          await tx.order.update({ where: { id: order.id }, data: { status: "paid_no_stock" } });
-          await emitDomainEvent({
-            type: DomainEventName.PAYMENT_MARKED_NO_STOCK,
-            correlationId,
-            actorType: "webhook",
-            aggregateType: "order",
-            aggregateId: order.id,
-            organizerId: order.organizerId,
-            eventId: order.eventId,
-            orderId: order.id,
-            context: { source: "webhooks.payments", provider: paymentEvent.provider },
-            payload: { paymentEventId: paymentEvent.id }
-          }, tx);
-          await markEventProcessed(tx, paymentEvent.id, { ignoredReason: null });
-          return { ok: true, outcome: "paid_no_stock" };
-        }
+        // TODO(ADR-0003): replace deterministic fallback with atomic remaining_inventory reservation.
+        await tx.order.update({ where: { id: order.id }, data: { status: "paid_no_stock" } });
+        await emitDomainEvent({
+          type: DomainEventName.PAYMENT_MARKED_NO_STOCK,
+          correlationId,
+          actorType: "webhook",
+          aggregateType: "order",
+          aggregateId: order.id,
+          organizerId: order.organizerId,
+          eventId: order.eventId,
+          orderId: order.id,
+          context: { source: "webhooks.payments", provider: paymentEvent.provider },
+          payload: { paymentEventId: paymentEvent.id }
+        }, tx);
+        await markEventProcessed(tx, paymentEvent.id, { ignoredReason: null });
+        return { ok: true, outcome: "paid_no_stock" };
       }
 
       const updateResult = await tx.order.updateMany({
