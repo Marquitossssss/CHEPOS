@@ -772,7 +772,7 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
 });
 
 
-app.post("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req: FastifyRequest<{ Params: { id: string } }>) => {
+app.post<{ Params: { id: string } }>("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req) => {
   const user = req.user as JwtPayload;
   const correlationId = req.correlationId;
   const order = await prisma.order.findUniqueOrThrow({ where: { id: req.params.id }, include: { event: true } });
