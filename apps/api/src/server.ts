@@ -991,7 +991,10 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
     const uniqueTarget = Array.isArray(error?.meta?.target)
       ? error.meta.target.map(String).join(",")
       : String(error?.meta?.target ?? "");
-    const isProviderEventUnique = uniqueTarget.includes("provider") && uniqueTarget.includes("providerEventId");
+    const targetNorm = uniqueTarget.toLowerCase();
+    const isProviderEventUnique =
+      targetNorm.includes("provider") &&
+      (targetNorm.includes("providereventid") || targetNorm.includes("provider_event_id") || targetNorm.includes("payment_events_provider_providereventid_key"));
 
     if (error?.code === "P2002" && isProviderEventUnique) {
       paymentWebhookDedupedTotal.inc({ provider });
