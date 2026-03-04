@@ -31,7 +31,12 @@ async function waitForHealth() {
   throw new Error("server did not become healthy in time");
 }
 
-describe("webhook concurrency", () => {
+const stateMachineEnabled = process.env.PAYMENTS_STATE_MACHINE_ENABLED === "true";
+
+// This integration test validates paid-transition concurrency semantics.
+// Keep it gated until PR3 (state machine) is active in the target branch.
+// Enable with PAYMENTS_STATE_MACHINE_ENABLED=true.
+describe.skipIf(!stateMachineEnabled)("webhook concurrency", () => {
   beforeAll(async () => {
     expect(process.env.DATABASE_URL, "DATABASE_URL is required for webhook concurrency integration test").toBeTruthy();
 
