@@ -192,6 +192,7 @@ model Order {
   items                      OrderItem[]
   tickets                    Ticket[]
   payments                   Payment[]
+  paymentEvents              PaymentEvent[]
   reservations               InventoryReservation[]
   emailEvents                EmailEvent[]
   latePaymentCases           LatePaymentCase[]
@@ -283,6 +284,27 @@ model Payment {
 
   @@unique([provider, providerRef])
   @@index([orderId, createdAt])
+}
+
+model PaymentEvent {
+  id                String   @id @default(uuid())
+  provider          String
+  providerEventId   String
+  providerPaymentId String?
+  eventType         String
+  orderId           String?  @db.Uuid
+  payloadJson       Json
+  receivedAt        DateTime @default(now())
+  processedAt       DateTime?
+  processError      String?
+  ignoredReason     String?
+  order             Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([orderId])
+  @@index([providerPaymentId])
+  @@index([receivedAt])
+  @@map("payment_events")
 }
 
 model ProcessedWebhookEvent {
