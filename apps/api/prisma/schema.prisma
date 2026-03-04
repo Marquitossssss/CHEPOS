@@ -298,7 +298,7 @@ model PaymentEvent {
   processedAt       DateTime?
   processError      String?
   ignoredReason     String?
-  order             Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  order             Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Restrict)
 
   @@unique([provider, providerEventId])
   @@index([orderId])

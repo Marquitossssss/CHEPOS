@@ -28,4 +28,4 @@ CREATE INDEX "payment_events_receivedAt_idx"
 ALTER TABLE "payment_events"
   ADD CONSTRAINT "payment_events_orderId_fkey"
   FOREIGN KEY ("orderId") REFERENCES "Order"("id")
-  ON DELETE SET NULL ON UPDATE CASCADE;
+  ON DELETE SET NULL ON UPDATE RESTRICT;
