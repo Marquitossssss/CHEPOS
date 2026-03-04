@@ -52,20 +52,20 @@ export const webhookSignatureInvalidTotal = getOrCreateCounter(
   ["provider"]
 );
 
-export const paymentsWebhookTotal = getOrCreateCounter(
-  "payments_webhook_total",
-  "Total de procesamiento de webhooks de pagos por outcome",
-  ["provider", "outcome"]
+export const paymentWebhookReceivedTotal = getOrCreateCounter(
+  "payment_webhook_received_total",
+  "Total de webhooks de pago recibidos",
+  ["provider", "event_type"]
 );
 
-export const paymentsIdempotencyDedupTotal = getOrCreateCounter(
-  "payments_idempotency_dedup_total",
-  "Total de eventos de pago deduplicados por idempotencia",
+export const paymentWebhookDedupedTotal = getOrCreateCounter(
+  "payment_webhook_deduped_total",
+  "Total de webhooks de pago deduplicados",
   ["provider"]
 );
 
-export const paymentsPaidTransitionTotal = getOrCreateCounter(
-  "payments_paid_transition_total",
-  "Total de resultados de transición a paid",
-  ["result"]
+export const paymentWebhookRejectedTotal = getOrCreateCounter(
+  "payment_webhook_rejected_total",
+  "Total de webhooks de pago rechazados",
+  ["provider", "reason"]
 );

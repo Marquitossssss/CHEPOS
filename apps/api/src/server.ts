@@ -1,5 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import sensible from "@fastify/sensible";
@@ -18,14 +18,10 @@ import {
   latePaymentCasesPending,
   latePaymentCasesTotal,
   manualOverrideEntriesTotal,
-  paymentsIdempotencyDedupTotal,
-  paymentsPaidTransitionTotal,
-  paymentsWebhookTotal,
-  webhookReplaysTotal,
-  webhookSignatureInvalidTotal
+  paymentWebhookDedupedTotal,
+  paymentWebhookReceivedTotal,
+  paymentWebhookRejectedTotal
 } from "./observability/metrics.js";
-import { claimProviderEvent, markProviderEventError, markProviderEventProcessed } from "./modules/payments/webhook-idempotency.js";
-import { assertWebhookRateLimitShared } from "./modules/payments/webhook-rate-limit.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
 
@@ -935,296 +931,95 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
   return updated;
 });
 
-app.post("/webhooks/payments/:provider", async (req: any, reply: any) => {
+app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async (req) => {
   const params = z.object({ provider: z.string().min(1) }).parse(req.params);
-  const body = z
-    .object({
-      externalEventId: z.string().optional(),
-      eventId: z.string().optional(),
-      id: z.union([z.string(), z.number()]).optional(),
-      orderId: z.string().uuid().optional(),
-      paymentAttemptId: z.string().uuid().optional(),
-      providerPaymentId: z.string().optional(),
-      paymentReference: z.string().optional(),
-      status: z.string().optional(),
-      reserveId: z.string().uuid().optional()
-    })
-    .passthrough()
-    .parse(req.body ?? {});
+  const body = (req.body ?? {}) as any;
 
   const provider = params.provider.toLowerCase();
-  const externalEventId = body.externalEventId ?? body.eventId ?? (body.id ? String(body.id) : undefined);
+  const providerEventId =
+    (typeof body.id === "string" || typeof body.id === "number")
+      ? String(body.id)
+      : (typeof body.event_id === "string" || typeof body.event_id === "number")
+        ? String(body.event_id)
+        : (typeof body.externalEventId === "string" || typeof body.externalEventId === "number")
+          ? String(body.externalEventId)
+          : (typeof body.eventId === "string" || typeof body.eventId === "number")
+            ? String(body.eventId)
+            : null;
+
+  if (!providerEventId) {
+    paymentWebhookRejectedTotal.inc({ provider, reason: "missing_event_id" });
+    req.log.warn({ correlationId: req.correlationId, provider, reason: "missing_event_id" }, "payment webhook rejected");
+    throw app.httpErrors.badRequest("providerEventId requerido");
+  }
+
+  const providerPaymentIdRaw = body?.data?.id ?? body?.payment_id ?? body?.paymentId;
+  const providerPaymentId = providerPaymentIdRaw == null ? null : String(providerPaymentIdRaw);
+  const eventType = typeof body.type === "string"
+    ? body.type
+    : typeof body.event_type === "string"
+      ? body.event_type
+      : typeof body.topic === "string"
+        ? body.topic
+        : "unknown";
+
+  const maybeOrderId = body?.data?.metadata?.orderId ?? body?.metadata?.orderId;
+  const parsedOrderId = typeof maybeOrderId === "string" && z.string().uuid().safeParse(maybeOrderId).success
+    ? maybeOrderId
+    : null;
+
+  paymentWebhookReceivedTotal.inc({ provider, event_type: eventType });
 
   try {
-    await assertWebhookRateLimitShared({
+    await prisma.paymentEvent.create({
+      data: {
+        provider,
+        providerEventId,
+        providerPaymentId,
+        eventType,
+        orderId: parsedOrderId,
+        payloadJson: body as any
+      }
+    });
+
+    req.log.info({
+      correlationId: req.correlationId,
       provider,
-      ip: req.ip ?? "unknown",
-      limitPerWindow: webhookRateLimitPerWindow,
-      windowSeconds: 60
-    });
+      providerEventId,
+      providerPaymentId,
+      orderId: parsedOrderId,
+      eventType,
+      outcome: "stored"
+    }, "payment webhook stored");
+
+    return { ok: true, deduped: false };
   } catch (error: any) {
-    if (error?.code === "WEBHOOK_RATE_LIMIT") {
-      throw app.httpErrors.tooManyRequests("Webhook rate limit exceeded");
-    }
-    throw error;
-  }
+    const uniqueTarget = Array.isArray(error?.meta?.target)
+      ? error.meta.target.map(String).join(",")
+      : String(error?.meta?.target ?? "");
+    const targetNorm = uniqueTarget.toLowerCase();
+    const isProviderEventUnique =
+      targetNorm.includes("provider") &&
+      (targetNorm.includes("providereventid") || targetNorm.includes("provider_event_id") || targetNorm.includes("payment_events_provider_providereventid_key"));
 
-  const signature = req.headers["x-webhook-signature"];
-  const timestampHeader = req.headers["x-webhook-timestamp"];
-
-  if (env.paymentsWebhookSecret) {
-    if (typeof signature !== "string") {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("invalid webhook signature");
-    }
-
-    if (!req.rawBody) {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("missing raw body for signature verification");
-    }
-
-    const rawBody = req.rawBody;
-    const timestamp = typeof timestampHeader === "string" ? timestampHeader : "";
-
-    if (!timestamp) {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("missing webhook timestamp");
-    }
-
-    const ts = Number(timestamp);
-    if (!Number.isFinite(ts)) {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("invalid webhook timestamp");
-    }
-
-    const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - ts);
-    if (ageSeconds > 300) {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("stale webhook timestamp");
-    }
-
-    const signedPayload = `${timestamp}.${rawBody.toString("utf8")}`;
-    const expected = createHmac("sha256", env.paymentsWebhookSecret).update(signedPayload).digest("hex");
-
-    const provided = Buffer.from(signature, "utf8");
-    const expectedBuf = Buffer.from(expected, "utf8");
-    const valid = provided.length === expectedBuf.length && timingSafeEqual(provided, expectedBuf);
-
-    if (!valid) {
-      webhookSignatureInvalidTotal.inc({ provider });
-      paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-      throw app.httpErrors.unauthorized("invalid webhook signature");
-    }
-  }
-
-  if (!externalEventId) {
-    paymentsWebhookTotal.inc({ provider, outcome: "invalid" });
-    throw app.httpErrors.badRequest("externalEventId requerido");
-  }
-
-  req.log.info({ correlationId: req.correlationId, provider, externalEventId }, "payments webhook received");
-
-  const payloadHash = createHash("sha256")
-    .update(req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(body))
-    .digest("hex");
-
-  const providerEvent = await claimProviderEvent({
-    provider,
-    providerEventId: externalEventId,
-    payloadHash,
-    orderId: body.orderId
-  });
-
-  if (providerEvent.state === "deduped") {
-    webhookReplaysTotal.inc({ provider });
-    paymentsIdempotencyDedupTotal.inc({ provider });
-    paymentsWebhookTotal.inc({ provider, outcome: "deduped" });
-    req.log.info({ correlationId: req.correlationId, provider, providerEventId: externalEventId, outcome: "deduped" }, "payments webhook deduped");
-    return { ok: true, deduped: true };
-  }
-
-  if (providerEvent.state === "in_flight") {
-    paymentsWebhookTotal.inc({ provider, outcome: "in_flight" });
-    req.log.info({ correlationId: req.correlationId, provider, providerEventId: externalEventId, outcome: "in_flight" }, "payments webhook in-flight");
-    return reply.code(202).send({ ok: true, inFlight: true });
-  }
-
-  if (providerEvent.mode === "retry") {
-    paymentsWebhookTotal.inc({ provider, outcome: "retry" });
-  }
-
-  try {
-    const providerPaymentId = body.providerPaymentId ?? body.paymentReference ?? undefined;
-    const paymentStatus = body.status?.toLowerCase() ?? "unknown";
-    const paidSignal = ["paid", "approved", "captured", "succeeded", "confirmed"].includes(paymentStatus);
-
-    let orderId = body.orderId;
-    let paymentAttemptId = body.paymentAttemptId;
-
-    if (!orderId && providerPaymentId) {
-      const payment = await prisma.payment.findUnique({
-        where: { provider_providerRef: { provider, providerRef: providerPaymentId } },
-        select: { id: true, orderId: true }
-      });
-      if (payment) {
-        orderId = payment.orderId;
-        paymentAttemptId = payment.id;
-      }
-    }
-
-    if (!orderId) {
-      await markProviderEventProcessed(provider, externalEventId);
-      paymentsWebhookTotal.inc({ provider, outcome: "processed" });
-      return { ok: true, recorded: true, matched: false };
-    }
-
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        reservations: {
-          select: { id: true, expiresAt: true, releasedAt: true },
-          orderBy: { createdAt: "desc" },
-          take: 1
-        }
-      }
-    });
-
-    if (!order) {
-      await markProviderEventProcessed(provider, externalEventId);
-      paymentsWebhookTotal.inc({ provider, outcome: "processed" });
-      return { ok: true, recorded: true, matched: false };
-    }
-
-    const now = new Date();
-    const reservation = order.reservations.at(0) ?? null;
-    const reservationExpired = order.status === "expired" || (!!order.reservedUntil && order.reservedUntil < now);
-    const inventoryReleased = !!reservation?.releasedAt;
-
-    let paidTransition: PaidTransitionResult | null = null;
-    if (paidSignal) {
-      paidTransition = await applyWebhookPaidTransition({
-        orderId: order.id,
+    if (error?.code === "P2002" && isProviderEventUnique) {
+      paymentWebhookDedupedTotal.inc({ provider });
+      req.log.info({
+        correlationId: req.correlationId,
         provider,
-        providerRef: providerPaymentId ?? externalEventId,
-        idempotencyKey: externalEventId,
-        correlationId: req.correlationId
-      });
-      paymentsPaidTransitionTotal.inc({ result: paidTransition.result });
-      req.log.info({ correlationId: req.correlationId, provider, providerEventId: externalEventId, orderId: order.id, outcome: paidTransition.reason }, "payments paid transition evaluated");
+        providerEventId,
+        providerPaymentId,
+        orderId: parsedOrderId,
+        eventType,
+        outcome: "deduped"
+      }, "payments webhook deduped");
+      return { ok: true, deduped: true };
     }
 
-    if (paidSignal && reservationExpired && inventoryReleased) {
-      const detectedAt = new Date();
-      const reserveId = body.reserveId ?? reservation?.id ?? null;
-
-      const lateCaseBase = {
-        orderId: order.id,
-        reserveId,
-        provider,
-        providerPaymentId: providerPaymentId ?? null,
-        paymentAttemptId: paymentAttemptId ?? null,
-        inventoryReleased: true,
-        status: "PENDING" as const,
-        detectedAt
-      };
-
-      let lateCase;
-      if (providerPaymentId) {
-        lateCase = await prisma.latePaymentCase.upsert({
-          where: { provider_providerPaymentId: { provider, providerPaymentId } },
-          update: {
-            inventoryReleased: true,
-            status: "PENDING",
-            detectedAt
-          },
-          create: lateCaseBase
-        });
-      } else if (paymentAttemptId) {
-        lateCase = await prisma.latePaymentCase.upsert({
-          where: { orderId_paymentAttemptId: { orderId: order.id, paymentAttemptId } },
-          update: {
-            inventoryReleased: true,
-            status: "PENDING",
-            detectedAt
-          },
-          create: lateCaseBase
-        });
-      } else {
-        lateCase = await prisma.latePaymentCase.create({ data: lateCaseBase });
-      }
-
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { latePaymentReviewRequired: true }
-      });
-
-      await prisma.$transaction(async (tx) => {
-        await emitDomainEvent({
-          type: DomainEventName.LATE_PAYMENT_DETECTED,
-          correlationId: req.correlationId,
-          actorType: "webhook",
-          aggregateType: "order",
-          aggregateId: order.id,
-          organizerId: order.organizerId,
-          eventId: order.eventId,
-          orderId: order.id,
-          context: { source: "webhooks.payments", provider, externalEventId },
-          payload: {
-            providerPaymentId: providerPaymentId ?? null,
-            paymentAttemptId: paymentAttemptId ?? null,
-            inventoryReleased,
-            reservationExpired
-          }
-        }, tx);
-
-        await emitDomainEvent({
-          type: DomainEventName.LATE_PAYMENT_CASE_CREATED,
-          correlationId: req.correlationId,
-          actorType: "webhook",
-          aggregateType: "order",
-          aggregateId: order.id,
-          organizerId: order.organizerId,
-          eventId: order.eventId,
-          orderId: order.id,
-          context: { source: "webhooks.payments", provider, externalEventId },
-          payload: {
-            latePaymentCaseId: lateCase.id,
-            providerPaymentId: providerPaymentId ?? null,
-            paymentAttemptId: paymentAttemptId ?? null
-          }
-        }, tx);
-      });
-
-      latePaymentCasesTotal.inc({ provider, reason: "inventory_released_after_expire" });
-      await syncLatePaymentPendingGauge(provider);
-      await markProviderEventProcessed(provider, externalEventId, order.id);
-      paymentsWebhookTotal.inc({ provider, outcome: "processed" });
-
-      return {
-        ok: true,
-        recorded: true,
-        latePaymentCaseId: lateCase.id,
-        latePaymentReviewRequired: true,
-        paidTransition: paidTransition?.reason ?? null
-      };
-    }
-
-    await markProviderEventProcessed(provider, externalEventId, order.id);
-    paymentsWebhookTotal.inc({ provider, outcome: "processed" });
-    return { ok: true, recorded: true, matched: true, paidTransition: paidTransition?.reason ?? null };
-  } catch (error) {
-    paymentsWebhookTotal.inc({ provider, outcome: "error" });
-    req.log.error({ correlationId: req.correlationId, provider, providerEventId: externalEventId, err: error }, "payments webhook processing failed");
-    await markProviderEventError(provider, externalEventId, error instanceof Error ? error.message : String(error));
+    paymentWebhookRejectedTotal.inc({ provider, reason: "persistence_error" });
     throw error;
   }
 });
-
 app.post("/webhooks/sendgrid", async (req: any) => {
   const events = Array.isArray(req.body) ? req.body : [];
   for (const e of events) {
