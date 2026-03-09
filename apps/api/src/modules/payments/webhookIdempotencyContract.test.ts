@@ -37,17 +37,17 @@ describe("payments webhook idempotency contract", () => {
   });
 
   it("uses transactional guard to prevent concurrent double paid transition", () => {
-    const server = read("apps/api/src/server.ts");
+    const applyPaymentEvent = read("apps/api/src/modules/payments/applyPaymentEvent.ts");
 
-    expect(server).toContain("FOR UPDATE");
-    expect(server).toContain("status: { in: [\"pending\", \"reserved\"] }");
-    expect(server).toContain("transition_guard_noop");
+    expect(applyPaymentEvent).toContain("FOR UPDATE");
+    expect(applyPaymentEvent).toContain("status: { in: [\"pending\", \"reserved\", \"expired\"] }");
+    expect(applyPaymentEvent).toContain("return { ok: true, outcome: \"terminal_guard\" }");
   });
 
   it("keeps paid transition idempotent when order is already paid", () => {
-    const server = read("apps/api/src/server.ts");
+    const applyPaymentEvent = read("apps/api/src/modules/payments/applyPaymentEvent.ts");
 
-    expect(server).toContain("already_paid");
-    expect(server).toContain("return { result: \"noop\", reason: \"already_paid\"");
+    expect(applyPaymentEvent).toContain("if (terminalStatuses.has(order.status))");
+    expect(applyPaymentEvent).toContain("return { ok: true, outcome: \"terminal_guard\" }");
   });
 });

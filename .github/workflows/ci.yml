@@ -192,6 +192,8 @@ jobs:
       JWT_ACCESS_SECRET: ci_jwt_access_secret_min_length_24_chars
       JWT_REFRESH_SECRET: ci_jwt_refresh_secret_min_length_24_chars
       QR_SECRET: ci_qr_secret_minimum_24_chars_long
+      SENDGRID_API_KEY: SG.fake-ci-key
+      SENDGRID_FROM_EMAIL: ci-noreply@articket.local
 
     steps:
       - name: checkout

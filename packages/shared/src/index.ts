@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const reserveSchema = z.object({
+  clientRequestId: z.string().min(1, "clientRequestId es obligatorio"),
   organizerId: z.string().uuid(),
   eventId: z.string().uuid(),
   customerEmail: z.string().email(),
@@ -8,6 +9,7 @@ export const reserveSchema = z.object({
 });
 
 export const confirmSchema = z.object({
+  clientRequestId: z.string().min(1, "clientRequestId es obligatorio"),
   orderId: z.string().uuid(),
   paymentReference: z.string().min(3)
 });

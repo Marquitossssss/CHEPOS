@@ -24,9 +24,11 @@ enum OrderStatus {
   pending
   reserved
   paid
+  failed
   canceled
   expired
   refunded
+  paid_no_stock
 }
 
 enum LatePaymentCaseStatus {
@@ -56,6 +58,9 @@ enum DomainEventType {
   LATE_PAYMENT_DETECTED
   LATE_PAYMENT_CASE_CREATED
   LATE_PAYMENT_CASE_RESOLVED
+  PAYMENT_MARKED_FAILED
+  PAYMENT_MARKED_REFUNDED
+  PAYMENT_MARKED_NO_STOCK
   MANUAL_OVERRIDE_EXECUTED
 }
 
@@ -161,6 +166,7 @@ model TicketType {
   salesEnd       DateTime?
   maxPerOrder    Int                    @default(10)
   requiredFields Json?
+  remaining      Int                    @default(0)
   createdAt      DateTime               @default(now())
   event          Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   orderItems     OrderItem[]
@@ -198,6 +204,8 @@ model Order {
   latePaymentCases           LatePaymentCase[]
   paymentProviderEvents      PaymentProviderEvent[]
   paymentIdempotencyKeys     PaymentIdempotencyKey[]
+  reserveIdempotencyKeys     ReserveIdempotencyKey[]
+  confirmIdempotencyKeys     ConfirmIdempotencyKey[]
   latePaymentReviewRequired  Boolean                @default(false)
   confirmationEmailSentAt    DateTime?
   confirmationEmailMessageId String?
@@ -264,6 +272,7 @@ model InventoryReservation {
   expiresAt    DateTime
   createdAt    DateTime   @default(now())
   releasedAt   DateTime?
+  releaseReason String?
   order        Order      @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   ticketType   TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
@@ -416,6 +425,30 @@ model DomainEvent {
   @@index([type, occurredAt])
   @@index([correlationId, occurredAt])
   @@index([aggregateType, aggregateId, occurredAt])
+}
+
+model ReserveIdempotencyKey {
+  id              String   @id @default(uuid())
+  clientRequestId String   @unique
+  orderId         String?
+  status          String   @default("completed")
+  createdAt       DateTime @default(now())
+  order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+model ConfirmIdempotencyKey {
+  id               String   @id @default(uuid())
+  clientRequestId  String   @unique
+  orderId          String   @db.Uuid
+  paymentReference String
+  createdAt        DateTime @default(now())
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([orderId])
+  @@index([createdAt])
 }
 
 model AuditLog {

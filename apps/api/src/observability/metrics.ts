@@ -69,3 +69,44 @@ export const paymentWebhookRejectedTotal = getOrCreateCounter(
   "Total de webhooks de pago rechazados",
   ["provider", "reason"]
 );
+
+export const paymentEventIgnoredTotal = getOrCreateCounter(
+  "payment_event_ignored_total",
+  "Total de eventos de pago ignorados por guardas de estado",
+  ["reason"]
+);
+
+export const reserveRejectNoStockTotal = getOrCreateCounter(
+  "reserve_reject_no_stock_total",
+  "Total de reservas rechazadas por falta de stock",
+  []
+);
+
+export const reserveIdempotentReplayTotal = getOrCreateCounter(
+  "reserve_idempotent_replay_total",
+  "Total de replays idempotentes en checkout/reserve (replay limpio + race resuelto)",
+  []
+);
+
+export const confirmIdempotentReplayTotal = new Counter({
+  name: "confirm_idempotent_replay_total",
+  help: "Total de replays idempotentes en checkout/confirm"
+});
+
+export const ttlReleasedTotal = getOrCreateCounter(
+  "ttl_released_total",
+  "Total de órdenes liberadas por el job TTL",
+  []
+);
+
+export const ttlSkippedTotal = getOrCreateCounter(
+  "ttl_skipped_total",
+  "Total de órdenes salteadas por el job TTL (ya procesadas por otro worker o pago)",
+  []
+);
+
+export const ttlErrorsTotal = getOrCreateCounter(
+  "ttl_errors_total",
+  "Total de errores del job TTL al procesar órdenes individuales",
+  []
+);

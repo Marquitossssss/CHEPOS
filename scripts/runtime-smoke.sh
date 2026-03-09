@@ -57,7 +57,7 @@ echo "[smoke] 8) Logs api/worker"
 docker compose logs --tail=200 api worker
 
 echo "[smoke] 9) Anti-symlink Windows"
-ANTI_SYMLINK_OUTPUT="$(docker run --rm articket-api sh -lc "grep -R 'C:/' -n /app 2>/dev/null | head -n 20 || true")"
+ANTI_SYMLINK_OUTPUT="$(docker compose exec -T api sh -lc "grep -R 'C:/' -n /app 2>/dev/null | head -n 20 || true")"
 if [ -n "$ANTI_SYMLINK_OUTPUT" ]; then
   echo "$ANTI_SYMLINK_OUTPUT"
   echo "[smoke] FAIL: se detectaron rutas Windows (C:/) dentro de la imagen" >&2

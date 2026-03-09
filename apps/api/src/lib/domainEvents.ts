@@ -57,7 +57,11 @@ export async function emitDomainEvent(input: DomainEventInput, db: DomainEventDb
       }
     });
     domainEventsTotal.inc({ type: input.type });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      // Idempotent no-op for once-only domain event constraints.
+      return;
+    }
     domainEventsErrorsTotal.inc({ type: input.type });
     throw error;
   }

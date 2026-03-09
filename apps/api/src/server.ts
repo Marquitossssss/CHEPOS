@@ -18,12 +18,17 @@ import {
   latePaymentCasesPending,
   latePaymentCasesTotal,
   manualOverrideEntriesTotal,
+  paymentEventIgnoredTotal,
   paymentWebhookDedupedTotal,
   paymentWebhookReceivedTotal,
-  paymentWebhookRejectedTotal
+  paymentWebhookRejectedTotal,
+  reserveRejectNoStockTotal,
+  reserveIdempotentReplayTotal,
+  confirmIdempotentReplayTotal
 } from "./observability/metrics.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
+import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
 
 const app = Fastify({ logger: true });
 
@@ -170,139 +175,6 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
   return { valid: true, ticket };
 }
 
-type PaidTransitionResult = { result: "applied" | "noop"; reason: string; orderId: string };
-
-async function applyWebhookPaidTransition(params: {
-  orderId: string;
-  provider: string;
-  providerRef: string;
-  idempotencyKey: string;
-  correlationId: string;
-}): Promise<PaidTransitionResult> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${params.orderId} AS uuid) FOR UPDATE`;
-
-    const order = await tx.order.findUnique({
-      where: { id: params.orderId },
-      include: { items: true, tickets: { select: { id: true }, take: 1 } }
-    });
-
-    if (!order) {
-      return { result: "noop", reason: "order_not_found", orderId: params.orderId };
-    }
-
-    await tx.paymentIdempotencyKey.upsert({
-      where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-      update: { orderId: order.id },
-      create: {
-        provider: params.provider,
-        idempotencyKey: params.idempotencyKey,
-        orderId: order.id,
-        status: "in_progress"
-      }
-    });
-
-    if (order.status === "paid") {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: "already_paid", orderId: order.id };
-    }
-
-    if (["canceled", "expired", "refunded"].includes(order.status)) {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: `state_${order.status}`, orderId: order.id };
-    }
-
-    await tx.payment.upsert({
-      where: { provider_providerRef: { provider: params.provider, providerRef: params.providerRef } },
-      update: { status: "paid" },
-      create: {
-        orderId: order.id,
-        provider: params.provider,
-        providerRef: params.providerRef,
-        status: "paid",
-        amountCents: order.totalCents
-      }
-    });
-
-    // Used only for deterministic concurrency tests.
-    const barrierMs = Number(process.env.PAYMENTS_CONCURRENCY_TEST_BARRIER_MS ?? 0);
-    if (barrierMs > 0 && process.env.NODE_ENV === "test") {
-      await new Promise((resolve) => setTimeout(resolve, barrierMs));
-    }
-
-    const updated = await tx.order.updateMany({
-      where: { id: order.id, status: { in: ["pending", "reserved"] } },
-      data: { status: "paid" }
-    });
-
-    if (updated.count === 0) {
-      await tx.paymentIdempotencyKey.update({
-        where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-        data: { status: "completed", completedAt: new Date() }
-      });
-      return { result: "noop", reason: "transition_guard_noop", orderId: order.id };
-    }
-
-    if (order.tickets.length === 0) {
-      const rows = order.items.flatMap((item) =>
-        Array.from({ length: item.quantity }).map(() => {
-          const finalCode = generateTicketCode(nanoid(18));
-          return {
-            orderId: order.id,
-            ticketTypeId: item.ticketTypeId,
-            eventId: order.eventId,
-            code: finalCode,
-            qrPayload: finalCode
-          };
-        })
-      );
-
-      if (rows.length > 0) {
-        await tx.ticket.createMany({ data: rows });
-        await emitDomainEvent({
-          type: DomainEventName.TICKETS_ISSUED,
-          correlationId: params.correlationId,
-          actorType: "webhook",
-          aggregateType: "order",
-          aggregateId: order.id,
-          organizerId: order.organizerId,
-          eventId: order.eventId,
-          orderId: order.id,
-          context: { source: "webhooks.payments" },
-          payload: { issuedCount: rows.length }
-        }, tx);
-      }
-    }
-
-    await tx.inventoryReservation.updateMany({ where: { orderId: order.id, releasedAt: null }, data: { releasedAt: new Date() } });
-
-    await emitDomainEvent({
-      type: DomainEventName.ORDER_PAID,
-      correlationId: params.correlationId,
-      actorType: "webhook",
-      aggregateType: "order",
-      aggregateId: order.id,
-      organizerId: order.organizerId,
-      eventId: order.eventId,
-      orderId: order.id,
-      context: { source: "webhooks.payments", provider: params.provider },
-      payload: { providerRef: params.providerRef, amountCents: order.totalCents }
-    }, tx);
-
-    await tx.paymentIdempotencyKey.update({
-      where: { provider_idempotencyKey: { provider: params.provider, idempotencyKey: params.idempotencyKey } },
-      data: { status: "completed", completedAt: new Date() }
-    });
-
-    return { result: "applied", reason: "paid_transition_applied", orderId: order.id };
-  });
-}
 
 registerDashboardRoutes(app, verifyAuth);
 
@@ -406,7 +278,7 @@ app.post("/events/:id/ticket-types", { preHandler: verifyAuth }, async (req: any
   const user = req.user as JwtPayload;
   const event = await prisma.event.findUniqueOrThrow({ where: { id: req.params.id } });
   await requireMembership(user.userId, event.organizerId, ["owner", "admin", "staff"]);
-  return prisma.ticketType.create({ data: { ...body, eventId: req.params.id } });
+  return prisma.ticketType.create({ data: { ...body, eventId: req.params.id, remaining: body.quota } });
 });
 
 app.get("/events/:id/ticket-types", async (req: any) => {
@@ -416,95 +288,160 @@ app.get("/events/:id/ticket-types", async (req: any) => {
 app.post("/checkout/reserve", async (req: any) => {
   const body = reserveSchema.parse(req.body);
   const correlationId = req.correlationId as string;
-  req.log.info({ correlationId, eventId: body.eventId }, "checkout reserve request");
+  req.log.info({ correlationId, eventId: body.eventId, clientRequestId: body.clientRequestId }, "checkout reserve request");
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
 
+  // --- IDEMPOTENCY CHECK ---
+  // Si ya existe una orden para este clientRequestId, devolverla sin crear nada nuevo.
+  const existingKey = await prisma.reserveIdempotencyKey.findUnique({
+    where: { clientRequestId: body.clientRequestId },
+    include: { order: { include: { items: true } } }
+  });
+
+  if (existingKey) {
+    if (existingKey.order) {
+      req.log.info({ correlationId, clientRequestId: body.clientRequestId, orderId: existingKey.orderId }, "checkout reserve idempotent replay");
+      checkoutReserveTotal.inc({ status: "idempotent_replay" });
+      reserveIdempotentReplayTotal.inc();
+      return existingKey.order;
+    }
+    // La clave existe pero la orden fue eliminada (SET NULL): tratar como request nueva
+  }
+  // --- END IDEMPOTENCY CHECK ---
+
   try {
     const order = await prisma.$transaction(async (tx) => {
-    const event = await tx.event.findUniqueOrThrow({ where: { id: body.eventId } });
-    if (event.organizerId !== body.organizerId) {
-      throw new Error("Evento fuera del organizador");
-    }
+      const event = await tx.event.findUniqueOrThrow({ where: { id: body.eventId } });
+      if (event.organizerId !== body.organizerId) {
+        throw new Error("Evento fuera del organizador");
+      }
 
-    const ticketTypes = [] as Awaited<ReturnType<typeof tx.ticketType.findUniqueOrThrow>>[];
-    let subtotal = 0;
+      const ticketTypes = [] as Awaited<ReturnType<typeof tx.ticketType.findUniqueOrThrow>>[];
+      let subtotal = 0;
 
-    for (const item of body.items) {
-      await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${item.ticketTypeId} AS uuid) FOR UPDATE`;
-      const tt = await tx.ticketType.findUniqueOrThrow({ where: { id: item.ticketTypeId } });
-      if (tt.eventId !== body.eventId) throw new Error("Ticket type invÃ¡lido");
-      if (item.quantity > tt.maxPerOrder) throw new Error("Supera mÃ¡ximo por orden");
+      // Ordenar items por ticketTypeId para evitar deadlocks por lock ordering
+      const sortedItems = [...body.items].sort((a, b) =>
+        a.ticketTypeId.localeCompare(b.ticketTypeId)
+      );
 
-      const paid = await tx.orderItem.aggregate({
-        _sum: { quantity: true },
-        where: { ticketTypeId: tt.id, order: { status: "paid" } }
+      for (const item of sortedItems) {
+        // FOR UPDATE serializes concurrent reservations on the same TicketType row.
+        await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${item.ticketTypeId} AS uuid) FOR UPDATE`;
+        const tt = await tx.ticketType.findUniqueOrThrow({ where: { id: item.ticketTypeId } });
+        if (tt.eventId !== body.eventId) throw new Error("Ticket type inválido");
+        if (item.quantity > tt.maxPerOrder) throw new Error("Supera máximo por orden");
+
+        // Atomic decrement with guard. Returns 0 if remaining < quantity (no stock).
+        // This replaces the two aggregate queries and is the authoritative stock check.
+        const stockUpdated = await tx.$executeRaw`
+          UPDATE "TicketType"
+          SET remaining = remaining - ${item.quantity}
+          WHERE id = CAST(${item.ticketTypeId} AS uuid)
+            AND remaining >= ${item.quantity}
+        `;
+        if (stockUpdated === 0) throw new Error("Sin stock");
+
+        subtotal += tt.priceCents * item.quantity;
+        ticketTypes.push(tt);
+      }
+
+      const organizer = await tx.organizer.findUniqueOrThrow({ where: { id: event.organizerId } });
+      const feeCents = Math.floor((subtotal * organizer.serviceFeeBps) / 10000);
+      const taxCents = Math.floor((subtotal * organizer.taxBps) / 10000);
+      const totalCents = subtotal + feeCents + taxCents;
+
+      const createdOrder = await tx.order.create({
+        data: {
+          organizerId: event.organizerId,
+          eventId: body.eventId,
+          customerEmail: body.customerEmail,
+          status: "reserved",
+          reservedUntil: expiresAt,
+          orderNumber: `ART-${nanoid(10).toUpperCase()}`,
+          subtotalCents: subtotal,
+          feeCents,
+          taxCents,
+          totalCents,
+          items: {
+            create: sortedItems.map((item: any) => {
+              const tt = ticketTypes.find((t) => t.id === item.ticketTypeId)!;
+              return {
+                ticketTypeId: item.ticketTypeId,
+                quantity: item.quantity,
+                unitPriceCents: tt.priceCents,
+                totalCents: tt.priceCents * item.quantity
+              };
+            })
+          },
+          reservations: {
+            create: sortedItems.map((item: any) => ({ ticketTypeId: item.ticketTypeId, quantity: item.quantity, expiresAt }))
+          }
+        },
+        include: { items: true }
       });
-      const activeReservations = await tx.inventoryReservation.aggregate({
-        _sum: { quantity: true },
-        where: { ticketTypeId: tt.id, releasedAt: null, expiresAt: { gt: now } }
-      });
-      const used = (paid._sum.quantity ?? 0) + (activeReservations._sum.quantity ?? 0);
-      if (used + item.quantity > tt.quota) throw new Error("Sin stock");
 
-      subtotal += tt.priceCents * item.quantity;
-      ticketTypes.push(tt);
-    }
+      // Persistir la clave de idempotencia DENTRO de la transacción.
+      // Si la TX falla, la clave no queda guardada y el retry es libre de reintentar.
+      // P2002: dos requests concurrentes con el mismo clientRequestId llegaron juntas.
+      // La DB garantiza que solo una gana. La que pierde debe buscar la orden ganadora
+      // y relanzar el error para que el handler externo la devuelva correctamente.
+      try {
+        await tx.reserveIdempotencyKey.create({
+          data: { clientRequestId: body.clientRequestId, orderId: createdOrder.id }
+        });
+      } catch (idempotencyError: any) {
+        if (idempotencyError?.code === "P2002") {
+          // Otra request concurrente ya creó la clave. Relanzar con señal especial
+          // para que el handler externo pueda hacer el lookup y devolver esa orden.
+          const raceError = new Error("RESERVE_IDEMPOTENCY_RACE");
+          (raceError as any).code = "RESERVE_IDEMPOTENCY_RACE";
+          throw raceError;
+        }
+        throw idempotencyError;
+      }
 
-    const organizer = await tx.organizer.findUniqueOrThrow({ where: { id: event.organizerId } });
-    const feeCents = Math.floor((subtotal * organizer.serviceFeeBps) / 10000);
-    const taxCents = Math.floor((subtotal * organizer.taxBps) / 10000);
-    const totalCents = subtotal + feeCents + taxCents;
-
-    const createdOrder = await tx.order.create({
-      data: {
+      await emitDomainEvent({
+        type: DomainEventName.ORDER_RESERVED,
+        correlationId: correlationId,
+        actorType: "system",
+        aggregateType: "order",
+        aggregateId: createdOrder.id,
         organizerId: event.organizerId,
         eventId: body.eventId,
-        customerEmail: body.customerEmail,
-        status: "reserved",
-        reservedUntil: expiresAt,
-        orderNumber: `ART-${nanoid(10).toUpperCase()}`,
-        subtotalCents: subtotal,
-        feeCents,
-        taxCents,
-        totalCents,
-        items: {
-          create: body.items.map((item: any) => {
-            const tt = ticketTypes.find((t) => t.id === item.ticketTypeId)!;
-            return {
-              ticketTypeId: item.ticketTypeId,
-              quantity: item.quantity,
-              unitPriceCents: tt.priceCents,
-              totalCents: tt.priceCents * item.quantity
-            };
-          })
-        },
-        reservations: {
-          create: body.items.map((item: any) => ({ ticketTypeId: item.ticketTypeId, quantity: item.quantity, expiresAt }))
-        }
-      },
-      include: { items: true }
-    });
-
-    await emitDomainEvent({
-      type: DomainEventName.ORDER_RESERVED,
-      correlationId: correlationId,
-      actorType: "system",
-      aggregateType: "order",
-      aggregateId: createdOrder.id,
-      organizerId: event.organizerId,
-      eventId: body.eventId,
-      orderId: createdOrder.id,
-      context: { source: "checkout.reserve" },
-      payload: { customerEmail: body.customerEmail, itemCount: body.items.length, totalCents }
-    }, tx);
+        orderId: createdOrder.id,
+        context: { source: "checkout.reserve" },
+        payload: { customerEmail: body.customerEmail, itemCount: body.items.length, totalCents }
+      }, tx);
 
       return createdOrder;
     });
 
     checkoutReserveTotal.inc({ status: "reserved" });
     return order;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === "Sin stock") {
+      checkoutReserveTotal.inc({ status: "no_stock" });
+      reserveRejectNoStockTotal.inc();
+      throw error;
+    }
+
+    if (error?.code === "RESERVE_IDEMPOTENCY_RACE") {
+      // Race condition resuelta: otra TX concurrente ganó con el mismo clientRequestId.
+      // Buscar la orden que esa TX creó y devolverla como si fuera un replay normal.
+      const winner = await prisma.reserveIdempotencyKey.findUnique({
+        where: { clientRequestId: body.clientRequestId },
+        include: { order: { include: { items: true } } }
+      });
+      if (winner?.order) {
+        req.log.info({ correlationId, clientRequestId: body.clientRequestId, orderId: winner.orderId }, "checkout reserve idempotent race resolved");
+        checkoutReserveTotal.inc({ status: "idempotent_replay" });
+        reserveIdempotentReplayTotal.inc();
+        return winner.order;
+      }
+      // Si por alguna razón no existe aún (timing extremo), dejar que suba como error
+    }
+
     checkoutReserveTotal.inc({ status: "error" });
     throw error;
   }
@@ -513,93 +450,186 @@ app.post("/checkout/reserve", async (req: any) => {
 app.post("/checkout/confirm", async (req: any) => {
   const body = confirmSchema.parse(req.body);
   const correlationId = req.correlationId as string;
-  req.log.info({ correlationId, orderId: body.orderId }, "checkout confirm request");
+  req.log.info({ correlationId, orderId: body.orderId, clientRequestId: body.clientRequestId }, "checkout confirm request");
+
+  // --- IDEMPOTENCY CHECK ---
+  // Fast path: if this clientRequestId was already processed, return the same result.
+  // We also validate payload consistency to catch client bugs early (before TX overhead).
+  const existingKey = await prisma.confirmIdempotencyKey.findUnique({
+    where: { clientRequestId: body.clientRequestId },
+    include: { order: { include: { tickets: true } } }
+  });
+
+  if (existingKey) {
+    // Same clientRequestId but different payload = client bug / security issue.
+    // Return 409 so the client knows their state is inconsistent.
+    if (existingKey.orderId !== body.orderId || existingKey.paymentReference !== body.paymentReference) {
+      req.log.warn({
+        correlationId,
+        clientRequestId: body.clientRequestId,
+        existingOrderId: existingKey.orderId,
+        requestedOrderId: body.orderId,
+        conflict: "payload_mismatch"
+      }, "checkout confirm idempotency conflict");
+      const conflictError: Error & { statusCode?: number; code?: string } = new Error(
+        "clientRequestId already used with different payload"
+      );
+      conflictError.statusCode = 409;
+      conflictError.code = "CONFIRM_IDEMPOTENCY_CONFLICT";
+      throw conflictError;
+    }
+
+    // Same payload: safe replay.
+    req.log.info({ correlationId, clientRequestId: body.clientRequestId, orderId: body.orderId }, "checkout confirm idempotent replay");
+    confirmIdempotentReplayTotal.inc();
+    checkoutConfirmTotal.inc({ status: "idempotent_replay" });
+    return existingKey.order;
+  }
+  // --- END IDEMPOTENCY CHECK ---
 
   try {
     const order = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${body.orderId} AS uuid) FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${body.orderId} AS uuid) FOR UPDATE`;
 
-    const duplicatePayment = await tx.payment.findUnique({
-      where: { provider_providerRef: { provider: "mock", providerRef: body.paymentReference } }
-    });
-    if (duplicatePayment) {
-      if (duplicatePayment.orderId !== body.orderId) {
-        const conflictError: Error & { statusCode?: number; code?: string } = new Error("Payment reference already used");
-        conflictError.statusCode = 409;
-        conflictError.code = "PAYMENT_REFERENCE_ALREADY_USED";
-        throw conflictError;
+      const duplicatePayment = await tx.payment.findUnique({
+        where: { provider_providerRef: { provider: "mock", providerRef: body.paymentReference } }
+      });
+      if (duplicatePayment) {
+        if (duplicatePayment.orderId !== body.orderId) {
+          const conflictError: Error & { statusCode?: number; code?: string } = new Error("Payment reference already used");
+          conflictError.statusCode = 409;
+          conflictError.code = "PAYMENT_REFERENCE_ALREADY_USED";
+          throw conflictError;
+        }
+        // Payment already exists for this order: safe to return existing state.
+        // Still persist idempotency key so future retries hit the fast path.
+        try {
+          await tx.confirmIdempotencyKey.create({
+            data: { clientRequestId: body.clientRequestId, orderId: body.orderId, paymentReference: body.paymentReference }
+          });
+        } catch (e: any) {
+          if (e?.code !== "P2002") throw e;
+          // Race: another concurrent request persisted the key first. No-op.
+        }
+        return tx.order.findUnique({ where: { id: duplicatePayment.orderId }, include: { tickets: true } });
       }
-      return tx.order.findUnique({ where: { id: duplicatePayment.orderId }, include: { tickets: true } });
-    }
 
-    const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
-    if (!order) throw new Error("Orden invÃ¡lida");
+      const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
+      if (!order) throw new Error("Orden inválida");
 
-    if (order.status === "paid") {
-      return tx.order.findUnique({ where: { id: order.id }, include: { tickets: true } });
-    }
-    if (order.status !== "reserved") throw new Error("Estado de orden invÃ¡lido");
-    if (!order.reservedUntil || order.reservedUntil < new Date()) throw new Error("Reserva expirada");
+      if (order.status === "paid") {
+        // Order already paid (e.g. concurrent webhook arrived first).
+        // Enforce paymentReference consistency for new clientRequestId values.
+        const existingOrderPayment = await tx.payment.findFirst({
+          where: { orderId: order.id, provider: "mock" },
+          orderBy: { createdAt: "desc" }
+        });
 
-    await tx.payment.create({
-      data: {
-        orderId: order.id,
-        provider: "mock",
-        providerRef: body.paymentReference,
-        status: "paid",
-        amountCents: order.totalCents
+        if (!existingOrderPayment) {
+          const stateError: Error & { statusCode?: number; code?: string } = new Error("Paid order without payment record");
+          stateError.statusCode = 422;
+          stateError.code = "PAID_ORDER_WITHOUT_PAYMENT";
+          throw stateError;
+        }
+
+        if (existingOrderPayment.providerRef !== body.paymentReference) {
+          const conflictError: Error & { statusCode?: number; code?: string } = new Error(
+            "Payment reference does not match paid order"
+          );
+          conflictError.statusCode = 409;
+          conflictError.code = "CONFIRM_PAYMENT_REFERENCE_MISMATCH";
+          throw conflictError;
+        }
+
+        // Persist idempotency key so future retries are fast.
+        try {
+          await tx.confirmIdempotencyKey.create({
+            data: { clientRequestId: body.clientRequestId, orderId: body.orderId, paymentReference: body.paymentReference }
+          });
+        } catch (e: any) {
+          if (e?.code !== "P2002") throw e;
+        }
+        return tx.order.findUnique({ where: { id: order.id }, include: { tickets: true } });
       }
-    });
 
-    await tx.order.update({ where: { id: order.id }, data: { status: "paid" } });
+      if (order.status !== "reserved") throw new Error("Estado de orden inválido");
+      if (!order.reservedUntil || order.reservedUntil < new Date()) throw new Error("Reserva expirada");
 
-    await emitDomainEvent({
-      type: DomainEventName.ORDER_PAID,
-      correlationId: correlationId,
-      actorType: "system",
-      aggregateType: "order",
-      aggregateId: order.id,
-      organizerId: order.organizerId,
-      eventId: order.eventId,
-      orderId: order.id,
-      context: { source: "checkout.confirm", provider: "mock" },
-      payload: { paymentReference: body.paymentReference, amountCents: order.totalCents }
-    }, tx);
-
-    const alreadyIssued = await tx.ticket.count({ where: { orderId: order.id } });
-    if (alreadyIssued === 0) {
-      const rows = order.items.flatMap((item) =>
-        Array.from({ length: item.quantity }).map(() => {
-          const finalCode = generateTicketCode(nanoid(18));
-          return {
-            orderId: order.id,
-            ticketTypeId: item.ticketTypeId,
-            eventId: order.eventId,
-            code: finalCode,
-            qrPayload: finalCode
-          };
-        })
-      );
-      if (rows.length > 0) {
-        await tx.ticket.createMany({ data: rows });
-        await emitDomainEvent({
-          type: DomainEventName.TICKETS_ISSUED,
-          correlationId: correlationId,
-          actorType: "system",
-          aggregateType: "order",
-          aggregateId: order.id,
-          organizerId: order.organizerId,
-          eventId: order.eventId,
+      await tx.payment.create({
+        data: {
           orderId: order.id,
-          context: { source: "checkout.confirm" },
-          payload: { issuedCount: rows.length }
-        }, tx);
-      }
-    }
+          provider: "mock",
+          providerRef: body.paymentReference,
+          status: "paid",
+          amountCents: order.totalCents
+        }
+      });
 
-    await tx.inventoryReservation.updateMany({ where: { orderId: order.id, releasedAt: null }, data: { releasedAt: new Date() } });
-    return tx.order.findUnique({ where: { id: order.id }, include: { tickets: true } });
-  });
+      await tx.order.update({ where: { id: order.id }, data: { status: "paid" } });
+
+      await emitDomainEvent({
+        type: DomainEventName.ORDER_PAID,
+        correlationId,
+        actorType: "system",
+        aggregateType: "order",
+        aggregateId: order.id,
+        organizerId: order.organizerId,
+        eventId: order.eventId,
+        orderId: order.id,
+        context: { source: "checkout.confirm", provider: "mock" },
+        payload: { paymentReference: body.paymentReference, amountCents: order.totalCents }
+      }, tx);
+
+      const alreadyIssued = await tx.ticket.count({ where: { orderId: order.id } });
+      if (alreadyIssued === 0) {
+        const rows = order.items.flatMap((item) =>
+          Array.from({ length: item.quantity }).map(() => {
+            const finalCode = generateTicketCode(nanoid(18));
+            return {
+              orderId: order.id,
+              ticketTypeId: item.ticketTypeId,
+              eventId: order.eventId,
+              code: finalCode,
+              qrPayload: finalCode
+            };
+          })
+        );
+        if (rows.length > 0) {
+          await tx.ticket.createMany({ data: rows });
+          await emitDomainEvent({
+            type: DomainEventName.TICKETS_ISSUED,
+            correlationId,
+            actorType: "system",
+            aggregateType: "order",
+            aggregateId: order.id,
+            organizerId: order.organizerId,
+            eventId: order.eventId,
+            orderId: order.id,
+            context: { source: "checkout.confirm" },
+            payload: { issuedCount: rows.length }
+          }, tx);
+        }
+      }
+
+      await tx.inventoryReservation.updateMany({
+        where: { orderId: order.id, releasedAt: null },
+        data: { releasedAt: new Date(), releaseReason: "consumed_by_payment" }
+      });
+
+      // Persist idempotency key inside TX.
+      // If TX fails, key is not stored and retry is free to re-attempt.
+      // P2002 here means two concurrent confirms raced — both are equivalent, safe to ignore.
+      try {
+        await tx.confirmIdempotencyKey.create({
+          data: { clientRequestId: body.clientRequestId, orderId: order.id, paymentReference: body.paymentReference }
+        });
+      } catch (e: any) {
+        if (e?.code !== "P2002") throw e;
+        // Race resolved: another concurrent request created the key. No-op.
+      }
+
+      return tx.order.findUnique({ where: { id: order.id }, include: { tickets: true } });
+    });
 
     if (order?.status === "paid") {
       await notificationQueue.add(
@@ -971,7 +1001,7 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
   paymentWebhookReceivedTotal.inc({ provider, event_type: eventType });
 
   try {
-    await prisma.paymentEvent.create({
+    const created = await prisma.paymentEvent.create({
       data: {
         provider,
         providerEventId,
@@ -991,6 +1021,28 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
       eventType,
       outcome: "stored"
     }, "payment webhook stored");
+
+    try {
+      const applyResult = await applyPaymentEvent(created.id, req.correlationId);
+      if (["terminal_guard", "unsupported_event_type", "unmatched"].includes(applyResult.outcome)) {
+        paymentEventIgnoredTotal.inc({ reason: applyResult.outcome });
+      }
+      req.log.info({
+        correlationId: req.correlationId,
+        provider,
+        providerEventId,
+        eventType,
+        outcome: applyResult.outcome
+      }, "payment event processed");
+    } catch (applyError: any) {
+      await prisma.paymentEvent.update({
+        where: { id: created.id },
+        data: {
+          processError: applyError instanceof Error ? applyError.message.slice(0, 1000) : String(applyError).slice(0, 1000)
+        }
+      });
+      req.log.error({ correlationId: req.correlationId, provider, providerEventId, err: applyError }, "payment event process error");
+    }
 
     return { ok: true, deduped: false };
   } catch (error: any) {
