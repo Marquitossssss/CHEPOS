@@ -1,0 +1,63 @@
+name: payments-integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  payments-integration:
+    name: payments integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: articket_payments_integration
+          POSTGRES_USER: articket
+          POSTGRES_PASSWORD: ci_pg_required_token_do_not_use
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U articket -d articket_payments_integration"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://articket:ci_pg_required_token_do_not_use@localhost:5432/articket_payments_integration?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci_jwt_access_secret_min_length_24_chars
+      JWT_REFRESH_SECRET: ci_jwt_refresh_secret_min_length_24_chars
+      QR_SECRET: ci_qr_secret_minimum_24_chars_long
+      PAYMENTS_WEBHOOK_SECRET: ci_webhook_secret_min_24_chars
+      SENDGRID_API_KEY: SG.fake-ci-key
+      SENDGRID_FROM_EMAIL: ci-noreply@articket.local
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: setup node 18 (pinned)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
+      - name: setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9.12.0
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: prisma generate
+        run: pnpm --filter @articket/api exec prisma generate
+      - name: migrate
+        run: pnpm --filter @articket/api exec prisma migrate deploy
+      - name: run checkout confirm idempotency integration test
+        run: pnpm --filter @articket/api test -- src/modules/payments/checkoutConfirmIdempotency.integration.test.ts
