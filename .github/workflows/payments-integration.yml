@@ -63,6 +63,9 @@ jobs:
       - name: install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: build shared package
+        run: pnpm --filter @articket/shared build
+
       - name: prisma generate
         run: pnpm --filter @articket/api exec prisma generate
 
