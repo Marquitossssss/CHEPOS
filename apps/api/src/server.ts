@@ -680,8 +680,7 @@ app.get("/events/:eventId/activity", { preHandler: verifyAuth }, async (req: any
     includePayload: z.coerce.boolean().optional()
   }).parse(req.query ?? {});
 
-  const event = await prisma.event.findUniqueOrThrow({ where: { id: req.params.eventId } });
-  await requireMembership(user.userId, event.organizerId, ["owner", "admin", "staff", "scanner"]);
+  await requireEventCapability(app, user.userId, req.params.eventId, "viewEventActivity");
 
   const types = query.types ? query.types.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
   if (types?.length) {
