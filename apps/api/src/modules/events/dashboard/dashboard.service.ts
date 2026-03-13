@@ -61,7 +61,6 @@ export interface EventDashboardDTO {
     aggregateType: string;
     aggregateId: string;
     correlationId: string | null;
-    payload: unknown;
   }>;
 }
 
@@ -92,7 +91,7 @@ export async function buildEventDashboard(user: JwtPayload, eventId: string, que
     select: { role: true }
   });
 
-  if (!membership) throw new Error("FORBIDDEN");
+  if (!membership || membership.role === "scanner") throw new Error("FORBIDDEN");
 
   const now = new Date();
 
@@ -177,8 +176,7 @@ export async function buildEventDashboard(user: JwtPayload, eventId: string, que
         actorId: true,
         aggregateType: true,
         aggregateId: true,
-        correlationId: true,
-        payload: true
+        correlationId: true
       }
     })
   ]);
@@ -271,8 +269,7 @@ export async function buildEventDashboard(user: JwtPayload, eventId: string, que
       actorId: item.actorId,
       aggregateType: item.aggregateType,
       aggregateId: item.aggregateId,
-      correlationId: item.correlationId,
-      payload: item.payload
+      correlationId: item.correlationId
     }))
   };
 }
