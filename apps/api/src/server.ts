@@ -676,8 +676,7 @@ app.get("/events/:eventId/activity", { preHandler: verifyAuth }, async (req: any
   const query = z.object({
     limit: z.coerce.number().int().positive().max(200).optional(),
     cursor: z.string().optional(),
-    types: z.string().optional(),
-    includePayload: z.coerce.boolean().optional()
+    types: z.string().optional()
   }).parse(req.query ?? {});
 
   await requireEventCapability(app, user.userId, req.params.eventId, "viewEventActivity");
@@ -697,8 +696,7 @@ app.get("/events/:eventId/activity", { preHandler: verifyAuth }, async (req: any
     userId: user.userId,
     limit: query.limit,
     cursor: query.cursor,
-    types: parsedTypes,
-    includePayload: query.includePayload
+    types: parsedTypes
   });
 });
 

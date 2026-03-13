@@ -20,7 +20,6 @@ export type ActivityQuery = {
   limit?: number;
   cursor?: string;
   types?: ActivityEventType[];
-  includePayload?: boolean;
 };
 
 function decodeCursor(cursor?: string): CursorData | null {

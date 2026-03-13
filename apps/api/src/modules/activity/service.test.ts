@@ -131,8 +131,7 @@ describe("fetchEventActivity", () => {
 
     const res = await fetchEventActivity(buildPrisma({ membership: { role: "staff" }, rows }), {
       eventId: "event-1",
-      userId: "user-1",
-      includePayload: true
+      userId: "user-1"
     });
 
     expect(res.items[0]).toEqual({
