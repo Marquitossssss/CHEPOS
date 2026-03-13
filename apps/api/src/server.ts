@@ -368,7 +368,17 @@ app.post("/organizers", { preHandler: verifyAuth }, async (req: any) => {
 
 app.get("/organizers", { preHandler: verifyAuth }, async (req: any) => {
   const user = req.user as JwtPayload;
-  return prisma.organizer.findMany({ where: { memberships: { some: { userId: user.userId } } } });
+  return prisma.organizer.findMany({
+    where: {
+      memberships: {
+        some: {
+          userId: user.userId,
+          role: { in: ["owner", "admin", "staff"] }
+        }
+      }
+    },
+    select: { id: true, name: true, slug: true }
+  });
 });
 
 app.post("/events", { preHandler: verifyAuth }, async (req: any) => {
@@ -392,8 +402,20 @@ app.post("/events", { preHandler: verifyAuth }, async (req: any) => {
 app.get("/events", { preHandler: verifyAuth }, async (req: any) => {
   const user = req.user as JwtPayload;
   const query = z.object({ organizerId: z.string().uuid() }).parse(req.query);
-  await requireMembership(user.userId, query.organizerId);
-  return prisma.event.findMany({ where: { organizerId: query.organizerId } });
+  await requireMembership(user.userId, query.organizerId, ["owner", "admin", "staff"]);
+  return prisma.event.findMany({
+    where: { organizerId: query.organizerId },
+    select: {
+      id: true,
+      organizerId: true,
+      name: true,
+      slug: true,
+      timezone: true,
+      startsAt: true,
+      endsAt: true,
+      visibility: true
+    }
+  });
 });
 
 app.post("/events/:id/ticket-types", { preHandler: verifyAuth }, async (req: any) => {

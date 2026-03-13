@@ -62,10 +62,9 @@ function Dashboard() {
         </div>
 
         {organizer ? (
-          <div className="grid gap-2 text-sm sm:grid-cols-3">
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
             <p><span className="font-medium">Nombre:</span> {organizer.name}</p>
             <p><span className="font-medium">Slug:</span> {organizer.slug}</p>
-            <p><span className="font-medium">Fees:</span> {organizer.serviceFeeBps ?? 0} bps · Tax {organizer.taxBps ?? 0} bps</p>
           </div>
         ) : (
           <p className="text-sm text-slate-600">No hay organizador disponible.</p>
