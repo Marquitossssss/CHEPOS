@@ -14,6 +14,12 @@ enum OrganizerRole {
   scanner
 }
 
+enum OrganizerInvitationStatus {
+  pending
+  accepted
+  revoked
+}
+
 enum EventVisibility {
   draft
   published
@@ -95,41 +101,75 @@ enum PaymentIdempotencyStatus {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
-  passwordHash String
-  createdAt    DateTime     @default(now())
-  memberships  Membership[]
-  orders       Order[]
-  scans        TicketScan[]
+  id                          String                 @id @default(uuid())
+  email                       String                 @unique
+  passwordHash                String
+  createdAt                   DateTime               @default(now())
+  memberships                 Membership[]
+  createdOrganizerInvitations OrganizerInvitation[]  @relation("OrganizerInvitationCreatedBy")
+  acceptedOrganizerInvitations OrganizerInvitation[] @relation("OrganizerInvitationAcceptedBy")
+  revokedOrganizerInvitations OrganizerInvitation[]  @relation("OrganizerInvitationRevokedBy")
+  orders                      Order[]
+  scans                       TicketScan[]
 
   @@index([createdAt])
 }
 
 model Organizer {
-  id            String       @id @default(uuid())
+  id            String                @id @default(uuid())
   name          String
-  slug          String       @unique
-  createdAt     DateTime     @default(now())
+  slug          String                @unique
+  createdAt     DateTime              @default(now())
   memberships   Membership[]
+  invitations   OrganizerInvitation[]
   events        Event[]
   orders        Order[]
-  serviceFeeBps Int          @default(0)
-  taxBps        Int          @default(0)
+  serviceFeeBps Int                   @default(0)
+  taxBps        Int                   @default(0)
 
   @@index([createdAt])
 }
 
 model Membership {
-  id          String        @id @default(uuid())
-  userId      String
-  organizerId String
-  role        OrganizerRole
-  user        User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  organizer   Organizer     @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  id                   String                 @id @default(uuid())
+  userId               String
+  organizerId          String
+  role                 OrganizerRole
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organizer            Organizer              @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  acceptedInvitations  OrganizerInvitation[]
 
   @@unique([userId, organizerId])
   @@index([organizerId, role])
+}
+
+model OrganizerInvitation {
+  id               String                    @id @default(uuid()) @db.Uuid
+  organizerId      String                    @db.Uuid
+  email            String
+  emailCanonical   String
+  role             OrganizerRole
+  status           OrganizerInvitationStatus @default(pending)
+  tokenHash        String
+  expiresAt        DateTime
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  createdByUserId  String                    @db.Uuid
+  acceptedAt       DateTime?
+  acceptedByUserId String?                   @db.Uuid
+  revokedAt        DateTime?
+  revokedByUserId  String?                   @db.Uuid
+  membershipId     String?                   @db.Uuid
+  organizer        Organizer                 @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdByUser    User                      @relation("OrganizerInvitationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  acceptedByUser   User?                     @relation("OrganizerInvitationAcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  revokedByUser    User?                     @relation("OrganizerInvitationRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  membership       Membership?               @relation(fields: [membershipId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([organizerId, status, createdAt])
+  @@index([emailCanonical, status, createdAt])
+  @@index([expiresAt, status])
+  @@index([tokenHash])
 }
 
 model Event {
