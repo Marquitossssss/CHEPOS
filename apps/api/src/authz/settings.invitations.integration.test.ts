@@ -128,6 +128,14 @@ describe.skipIf(!hasIntegrationEnv)("settings invitations integration", () => {
     expect(audit?.action).toBe("membership.invitation_created");
   });
 
+  it("non-owner cannot list invitation set", async () => {
+    const scenario = await seedScenario();
+    const adminToken = await login(scenario.admin.email, scenario.admin.password);
+
+    const listResponse = await authFetch(`/organizers/${scenario.organizer.id}/invitations`, adminToken);
+    expect(listResponse.status).toBe(403);
+  });
+
   it("non-owner cannot create invitation", async () => {
     const scenario = await seedScenario();
     const adminToken = await login(scenario.admin.email, scenario.admin.password);

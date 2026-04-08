@@ -189,6 +189,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
 
   it("maps capabilities coherently for owner/admin/staff/scanner", () => {
     expect(getOrganizerRoleCapabilities("owner")).toMatchObject({
+      viewOrganizerSettings: true,
+      updateOrganizerSettings: true,
+      viewOrganizerMembers: true,
+      inviteOrganizerMembers: true,
+      manageOrganizerMemberships: true,
+      revokeOrganizerInvitations: true,
       createEvent: true,
       manageTicketTypes: true,
       resolveLatePayments: true,
@@ -197,6 +203,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("admin")).toMatchObject({
+      viewOrganizerSettings: true,
+      updateOrganizerSettings: false,
+      viewOrganizerMembers: true,
+      inviteOrganizerMembers: false,
+      manageOrganizerMemberships: false,
+      revokeOrganizerInvitations: false,
       createEvent: true,
       manageTicketTypes: true,
       resolveLatePayments: true,
@@ -205,6 +217,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("staff")).toMatchObject({
+      viewOrganizerSettings: false,
+      updateOrganizerSettings: false,
+      viewOrganizerMembers: false,
+      inviteOrganizerMembers: false,
+      manageOrganizerMemberships: false,
+      revokeOrganizerInvitations: false,
       createEvent: false,
       manageTicketTypes: false,
       resolveLatePayments: false,
@@ -216,6 +234,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("scanner")).toMatchObject({
+      viewOrganizerSettings: false,
+      updateOrganizerSettings: false,
+      viewOrganizerMembers: false,
+      inviteOrganizerMembers: false,
+      manageOrganizerMemberships: false,
+      revokeOrganizerInvitations: false,
       createEvent: false,
       manageTicketTypes: false,
       resolveLatePayments: false,

@@ -5,6 +5,14 @@
 - `POST /auth/login`
 - `POST /auth/refresh`
 - `GET /authz/context`
+  - para esta fase expone capacidades canónicas de organizer authz
+  - capabilities de esta fase:
+    - `viewOrganizerSettings`
+    - `updateOrganizerSettings`
+    - `viewOrganizerMembers`
+    - `inviteOrganizerMembers`
+    - `manageOrganizerMemberships`
+    - `revokeOrganizerInvitations`
 
 ## Organizers / Events
 - `POST /organizers`
@@ -77,6 +85,59 @@ curl -X POST http://localhost:3000/checkout/reserve \
 ## Actividad de evento
 - `GET /events/:eventId/activity?limit=50&types=ORDER_PAID,TICKET_CHECKED_IN`
 - `GET /api/events/:eventId/dashboard?range=7d&bucket=day`
+
+## Organizer authz capability model — fase 1
+- source of truth canónica: `packages/shared/src/adminAuthz.ts`
+- representación runtime del contexto: `GET /authz/context`
+- capacidades definidas en esta fase:
+  - `viewOrganizerSettings`
+  - `updateOrganizerSettings`
+  - `viewOrganizerMembers`
+  - `inviteOrganizerMembers`
+  - `manageOrganizerMemberships`
+  - `revokeOrganizerInvitations`
+- mapping real validado en esta fase:
+  - `owner`
+    - `viewOrganizerSettings`
+    - `updateOrganizerSettings`
+    - `viewOrganizerMembers`
+    - `inviteOrganizerMembers`
+    - `manageOrganizerMemberships`
+    - `revokeOrganizerInvitations`
+  - `admin`
+    - `viewOrganizerSettings`
+    - `viewOrganizerMembers`
+    - no puede `updateOrganizerSettings`
+    - no puede `inviteOrganizerMembers`
+    - no puede `manageOrganizerMemberships`
+    - no puede `revokeOrganizerInvitations`
+  - `staff`
+    - sin capacidades de organizer settings / memberships / invitations en esta fase
+  - `scanner`
+    - sin capacidades de organizer settings / memberships / invitations en esta fase
+- enforcement endurecido en esta fase:
+  - `GET /organizers/:id/memberships` -> `viewOrganizerMembers`
+  - `POST /organizers/:id/memberships` -> `manageOrganizerMemberships` (owner-only por mapping real)
+  - `POST /organizers/:id/memberships/:membershipId/role` -> `manageOrganizerMemberships` (owner-only por mapping real)
+  - `DELETE /organizers/:id/memberships/:membershipId` -> `manageOrganizerMemberships` (owner-only por mapping real)
+  - `GET /organizers/:id/invitations` -> owner-only
+  - `POST /organizers/:id/invitations` -> owner-only
+  - `POST /organizers/:id/invitations/:invitationId/resend` -> owner-only
+  - `POST /organizers/:id/invitations/:invitationId/revoke` -> owner-only
+  - `POST /organizers/invitations/accept` -> fuera del capability model del actor organizacional; depende de token + email autenticado
+- invariantes contractuales validadas:
+  - membership lifecycle create / role change / remove = owner-only
+  - organizer invitations list / create / resend / revoke = owner-only
+  - admin puede leer memberships y recibe capabilities coherentes en `/authz/context` y en el listado de memberships
+- fuera de scope de esta fase:
+  - payments
+  - dashboard / analytics
+  - check-in
+  - inventario
+  - frontend/UI
+- deuda operativa validada en el rerun local:
+  - la validación verde reutilizó `Postgres` y `Redis` Docker externos al compose context actual del workspace
+  - contenedores observados: `chepos-postgres-1` y `chepos-redis-1`
 
 ## Operación
 - `GET /late-payment-cases`
