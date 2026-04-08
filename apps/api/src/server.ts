@@ -41,6 +41,7 @@ import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
 import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
 import { materializePayment } from "./modules/payments/materializePayment.js";
+import { registerOrganizerInvitationRoutes } from "./routes/organizerInvitations.routes.js";
 
 export const app = Fastify({ logger: true });
 
@@ -97,8 +98,13 @@ await app.register(jwt, { secret: env.jwtAccessSecret });
 app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
   const raw = Buffer.isBuffer(body) ? body : Buffer.from(body);
   req.rawBody = raw;
+  const text = raw.toString("utf8").trim();
+  if (text.length === 0) {
+    done(null, {});
+    return;
+  }
   try {
-    done(null, JSON.parse(raw.toString("utf8")));
+    done(null, JSON.parse(text));
   } catch (error) {
     done(error as Error, undefined);
   }
@@ -189,6 +195,7 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
 
 
 registerDashboardRoutes(app, verifyAuth);
+await registerOrganizerInvitationRoutes(app, { verifyAuth });
 
 app.get("/health", async () => ({ ok: true }));
 
@@ -1401,4 +1408,3 @@ app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, req:
 if (!app.server.listening) {
   await app.listen({ host: "0.0.0.0", port: env.apiPort });
 }
-
