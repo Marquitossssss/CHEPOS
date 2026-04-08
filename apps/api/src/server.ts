@@ -308,7 +308,7 @@ app.get("/events", { preHandler: verifyAuth }, async (req: any) => {
 app.get("/organizers/:id/memberships", { preHandler: verifyAuth }, async (req: any) => {
   const user = req.user as JwtPayload;
   const params = z.object({ id: z.string().uuid() }).parse(req.params);
-  const authz = await requireOrganizerCapability(app, user.userId, params.id, "viewOrganizerSettings");
+  const authz = await requireOrganizerCapability(app, user.userId, params.id, "viewOrganizerMembers");
 
   const rows = await prisma.membership.findMany({
     where: { organizerId: params.id },
@@ -322,29 +322,26 @@ app.get("/organizers/:id/memberships", { preHandler: verifyAuth }, async (req: a
     }
   });
 
-  const dto: OrganizerMemberListItem[] = rows.map((row) => ({
-    membershipId: row.id,
-    userId: row.userId,
-    organizerId: row.organizer.id,
-    organizerName: row.organizer.name,
-    organizerSlug: row.organizer.slug,
-    email: row.user.email,
-    role: row.role,
-    canChangeRole: authz.organizerRole === "owner" && row.role !== "owner" && row.userId !== user.userId,
-    allowedRoleTargets: row.role === "owner" ? [] : ["admin", "staff", "scanner"],
-    capabilities: {
-      viewOrganizerSettings: row.role === "owner" || row.role === "admin",
-      createEvent: row.role === "owner" || row.role === "admin",
-      manageTicketTypes: row.role === "owner" || row.role === "admin",
-      viewEventDashboard: true,
-      operateEvent: true,
-      scanTickets: true,
-      viewEventActivity: row.role !== "scanner",
-      viewLatePaymentCases: row.role !== "scanner",
-      resolveLatePayments: row.role === "owner" || row.role === "admin",
-      resendOrderConfirmation: row.role !== "scanner"
+  const dto: OrganizerMemberListItem[] = [];
+  for (const row of rows) {
+    const memberAuthz = await getOrganizerAuthorizationContext(row.userId, params.id);
+    if (!memberAuthz) {
+      throw app.httpErrors.internalServerError("Membership sin contexto authz");
     }
-  }));
+
+    dto.push({
+      membershipId: row.id,
+      userId: row.userId,
+      organizerId: row.organizer.id,
+      organizerName: row.organizer.name,
+      organizerSlug: row.organizer.slug,
+      email: row.user.email,
+      role: row.role,
+      canChangeRole: authz.organizerRole === "owner" && row.role !== "owner" && row.userId !== user.userId,
+      allowedRoleTargets: row.role === "owner" ? [] : ["admin", "staff", "scanner"],
+      capabilities: memberAuthz.capabilities
+    });
+  }
 
   return organizerMembersListSchema.parse(dto);
 });
@@ -354,14 +351,7 @@ app.post("/organizers/:id/memberships", { preHandler: verifyAuth }, async (req: 
   const params = z.object({ id: z.string().uuid() }).parse(req.params);
   const body = organizerMemberCreateInputSchema.parse(req.body ?? {});
 
-  const actorMembership = await prisma.membership.findUnique({
-    where: { userId_organizerId: { userId: user.userId, organizerId: params.id } },
-    select: { role: true }
-  });
-
-  if (!actorMembership || actorMembership.role !== "owner") {
-    throw app.httpErrors.forbidden("Solo owner puede crear miembros de la organización");
-  }
+  await requireOrganizerCapability(app, user.userId, params.id, "manageOrganizerMemberships");
 
   const targetUser = await prisma.user.findUnique({
     where: { email: body.email },
@@ -423,14 +413,7 @@ app.post("/organizers/:id/memberships/:membershipId/role", { preHandler: verifyA
   const params = z.object({ id: z.string().uuid(), membershipId: z.string().uuid() }).parse(req.params);
   const body = organizerMemberRoleUpdateInputSchema.parse(req.body ?? {});
 
-  const actorMembership = await prisma.membership.findUnique({
-    where: { userId_organizerId: { userId: user.userId, organizerId: params.id } },
-    select: { userId: true, organizerId: true, role: true }
-  });
-
-  if (!actorMembership || actorMembership.role !== "owner") {
-    throw app.httpErrors.forbidden("Solo owner puede cambiar roles de la organización");
-  }
+  await requireOrganizerCapability(app, user.userId, params.id, "manageOrganizerMemberships");
 
   const targetMembership = await prisma.membership.findUnique({
     where: { id: params.membershipId },
@@ -492,14 +475,7 @@ app.delete("/organizers/:id/memberships/:membershipId", { preHandler: verifyAuth
   const user = req.user as JwtPayload;
   const params = z.object({ id: z.string().uuid(), membershipId: z.string().uuid() }).parse(req.params);
 
-  const actorMembership = await prisma.membership.findUnique({
-    where: { userId_organizerId: { userId: user.userId, organizerId: params.id } },
-    select: { userId: true, role: true }
-  });
-
-  if (!actorMembership || actorMembership.role !== "owner") {
-    throw app.httpErrors.forbidden("Solo owner puede remover miembros de la organización");
-  }
+  await requireOrganizerCapability(app, user.userId, params.id, "manageOrganizerMemberships");
 
   const targetMembership = await prisma.membership.findUnique({
     where: { id: params.membershipId },
