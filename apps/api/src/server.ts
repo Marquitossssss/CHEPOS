@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { Counter, Gauge, Histogram, collectDefaultMetrics, register } from "prom-client";
-import { confirmSchema, reserveSchema } from "@articket/shared";
+import { confirmSchema, checkoutPaymentMethodsConfigResponseSchema, reserveSchema } from "@articket/shared";
 import { prisma } from "./lib/prisma.js";
 import { getOrganizerAuthorizationContext, requireEventCapability, requireOrganizerCapability } from "./lib/adminAuthz.js";
 import { env } from "./lib/env.js";
@@ -30,6 +30,7 @@ import {
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
 import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
+import { assertCheckoutPaymentMethodAllowed, getCheckoutPaymentMethodConfig } from "./modules/payments/checkoutPaymentMethods.js";
 import { materializePayment } from "./modules/payments/materializePayment.js";
 
 const app = Fastify({ logger: true });
@@ -307,6 +308,35 @@ app.get("/events/:id/ticket-types", async (req: any) => {
   return prisma.ticketType.findMany({ where: { eventId: req.params.id } });
 });
 
+app.get("/checkout/events/:eventId/payment-methods", async (req: any) => {
+  const params = z.object({ eventId: z.string().uuid() }).parse(req.params);
+  const config = await getCheckoutPaymentMethodConfig(prisma, params.eventId);
+  return checkoutPaymentMethodsConfigResponseSchema.parse(config);
+});
+
+app.put("/events/:id/checkout/payment-methods", { preHandler: verifyAuth }, async (req: any) => {
+  const params = z.object({ id: z.string().uuid() }).parse(req.params);
+  const body = z.object({
+    allowedMethodTypes: z.array(z.enum(["debit_card", "credit_card"])).min(1)
+  }).parse(req.body ?? {});
+  const user = req.user as JwtPayload;
+
+  await requireEventCapability(app, user.userId, params.id, "manageTicketTypes");
+
+  const allowed = [...new Set(body.allowedMethodTypes)].sort();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.event.findUniqueOrThrow({ where: { id: params.id } });
+    await tx.eventCheckoutPaymentMethod.deleteMany({ where: { eventId: params.id } });
+    await tx.eventCheckoutPaymentMethod.createMany({
+      data: allowed.map((methodType) => ({ eventId: params.id, methodType, enabled: true }))
+    });
+  });
+
+  const config = await getCheckoutPaymentMethodConfig(prisma, params.id);
+  return checkoutPaymentMethodsConfigResponseSchema.parse(config);
+});
+
 app.post("/checkout/reserve", async (req: any) => {
   const body = reserveSchema.parse(req.body);
   const correlationId = req.correlationId as string;
@@ -485,12 +515,18 @@ app.post("/checkout/confirm", async (req: any) => {
   if (existingKey) {
     // Same clientRequestId but different payload = client bug / security issue.
     // Return 409 so the client knows their state is inconsistent.
-    if (existingKey.orderId !== body.orderId || existingKey.paymentReference !== body.paymentReference) {
+    if (
+      existingKey.orderId !== body.orderId ||
+      existingKey.paymentReference !== body.paymentReference ||
+      existingKey.paymentMethodType !== body.paymentMethodType
+    ) {
       req.log.warn({
         correlationId,
         clientRequestId: body.clientRequestId,
         existingOrderId: existingKey.orderId,
         requestedOrderId: body.orderId,
+        existingPaymentMethodType: existingKey.paymentMethodType,
+        requestedPaymentMethodType: body.paymentMethodType,
         conflict: "payload_mismatch"
       }, "checkout confirm idempotency conflict");
       const conflictError: Error & { statusCode?: number; code?: string } = new Error(
@@ -515,6 +551,8 @@ app.post("/checkout/confirm", async (req: any) => {
 
       const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
       if (!order) throw new Error("Orden inválida");
+
+      await assertCheckoutPaymentMethodAllowed(tx as any, order.eventId, body.paymentMethodType);
 
       if (order.status === "paid") {
         // Order already paid (e.g. concurrent webhook arrived first).
@@ -543,7 +581,12 @@ app.post("/checkout/confirm", async (req: any) => {
         // Persist idempotency key so future retries are fast.
         try {
           await tx.confirmIdempotencyKey.create({
-            data: { clientRequestId: body.clientRequestId, orderId: body.orderId, paymentReference: body.paymentReference }
+            data: {
+              clientRequestId: body.clientRequestId,
+              orderId: body.orderId,
+              paymentReference: body.paymentReference,
+              paymentMethodType: body.paymentMethodType
+            }
           });
         } catch (e: any) {
           if (e?.code !== "P2002") throw e;
@@ -565,7 +608,12 @@ app.post("/checkout/confirm", async (req: any) => {
       if (materializedPayment.state === "existing") {
         try {
           await tx.confirmIdempotencyKey.create({
-            data: { clientRequestId: body.clientRequestId, orderId: order.id, paymentReference: body.paymentReference }
+            data: {
+              clientRequestId: body.clientRequestId,
+              orderId: order.id,
+              paymentReference: body.paymentReference,
+              paymentMethodType: body.paymentMethodType
+            }
           });
         } catch (e: any) {
           if (e?.code !== "P2002") throw e;
@@ -629,7 +677,12 @@ app.post("/checkout/confirm", async (req: any) => {
       // P2002 here means two concurrent confirms raced — both are equivalent, safe to ignore.
       try {
         await tx.confirmIdempotencyKey.create({
-          data: { clientRequestId: body.clientRequestId, orderId: order.id, paymentReference: body.paymentReference }
+          data: {
+            clientRequestId: body.clientRequestId,
+            orderId: order.id,
+            paymentReference: body.paymentReference,
+            paymentMethodType: body.paymentMethodType
+          }
         });
       } catch (e: any) {
         if (e?.code !== "P2002") throw e;
@@ -1143,4 +1196,3 @@ app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, req:
 });
 
 await app.listen({ host: "0.0.0.0", port: env.apiPort });
-

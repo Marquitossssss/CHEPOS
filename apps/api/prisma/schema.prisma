@@ -94,6 +94,11 @@ enum PaymentIdempotencyStatus {
   failed
 }
 
+enum CheckoutPaymentMethodType {
+  debit_card
+  credit_card
+}
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -149,6 +154,7 @@ model Event {
   ticketTypes TicketType[]
   orders      Order[]
   scans       TicketScan[]
+  checkoutPaymentMethods EventCheckoutPaymentMethod[]
 
   @@unique([organizerId, slug])
   @@index([organizerId, visibility])
@@ -440,15 +446,29 @@ model ReserveIdempotencyKey {
 }
 
 model ConfirmIdempotencyKey {
-  id               String   @id @default(uuid())
-  clientRequestId  String   @unique
-  orderId          String   @db.Uuid
-  paymentReference String
-  createdAt        DateTime @default(now())
-  order            Order    @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  id                String                     @id @default(uuid())
+  clientRequestId   String                     @unique
+  orderId           String                     @db.Uuid
+  paymentReference  String
+  paymentMethodType CheckoutPaymentMethodType?
+  createdAt         DateTime                   @default(now())
+  order             Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([orderId])
   @@index([createdAt])
+}
+
+model EventCheckoutPaymentMethod {
+  id         String                    @id @default(uuid())
+  eventId    String                    @db.Uuid
+  methodType CheckoutPaymentMethodType
+  enabled    Boolean                   @default(true)
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+  event      Event                     @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([eventId, methodType])
+  @@index([eventId, enabled])
 }
 
 model AuditLog {
