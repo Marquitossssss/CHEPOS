@@ -3,6 +3,7 @@ import type { PropsWithChildren, ReactNode } from "react";
 import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { type MinimalAdminAuthorizationContext } from "../lib/adminAccess";
 
 type Organizer = {
   id: string;
@@ -170,6 +171,14 @@ export function useAdminContext() {
     localStorage.setItem(activeEventStorageKey(activeOrganizer.id), eventId);
   };
 
+  const authorization: MinimalAdminAuthorizationContext = useMemo(() => {
+    if (typeof window === "undefined") return { organizerRole: "admin" };
+    const stored = localStorage.getItem("articket.admin.visualRole");
+    if (stored === "scanner") return { organizerRole: "scanner" };
+    if (stored === "staff") return { organizerRole: "staff" };
+    return { organizerRole: "admin" };
+  }, []);
+
   return {
     location,
     navigate,
@@ -179,6 +188,7 @@ export function useAdminContext() {
     events,
     activeOrganizer,
     activeEvent,
+    authorization,
     setActiveOrganizerId,
     setActiveEventId
   };

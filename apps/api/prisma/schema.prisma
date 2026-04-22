@@ -94,6 +94,11 @@ enum PaymentIdempotencyStatus {
   failed
 }
 
+enum ArtistStatus {
+  active
+  inactive
+}
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -149,10 +154,47 @@ model Event {
   ticketTypes TicketType[]
   orders      Order[]
   scans       TicketScan[]
+  eventArtists EventArtist[]
 
   @@unique([organizerId, slug])
   @@index([organizerId, visibility])
   @@index([startsAt])
+}
+
+model Artist {
+  id                String        @id @default(uuid()) @db.Uuid
+  slug              String        @unique
+  displayName       String
+  legalOrFullName   String?
+  shortBio          String?
+  profileImageUrl   String?
+  genreTagsJson     Json?
+  externalLinksJson Json?
+  status            ArtistStatus  @default(active)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  eventArtists      EventArtist[]
+
+  @@index([status, createdAt])
+  @@index([displayName])
+}
+
+model EventArtist {
+  id           String   @id @default(uuid()) @db.Uuid
+  eventId      String   @db.Uuid
+  artistId     String   @db.Uuid
+  billingOrder Int?
+  billingLabel String?
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  artist       Artist   @relation(fields: [artistId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([eventId, artistId])
+  @@index([eventId, billingOrder])
+  @@index([artistId])
+  @@index([eventId, isPrimary])
 }
 
 model TicketType {
