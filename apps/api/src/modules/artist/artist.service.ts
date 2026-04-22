@@ -60,13 +60,30 @@ type EventDelegate = {
   findUniqueOrThrow(args: { where: { id: string }; select: { id: true } }): Promise<{ id: string }>;
 };
 
+type EventArtistCreateArgs = {
+  data: {
+    eventId: string;
+    artistId: string;
+    billingOrder?: number | null;
+    billingLabel?: string | null;
+    isPrimary?: boolean;
+  };
+  include: { artist: true };
+};
+
+type EventArtistUpdateArgs = {
+  where: { eventId_artistId: { eventId: string; artistId: string } };
+  data: {
+    billingOrder?: number | null;
+    billingLabel?: string | null;
+    isPrimary?: boolean;
+  };
+  include: { artist: true };
+};
+
 type EventArtistDelegate = {
-  create(args: { data: Record<string, unknown>; include: { artist: true } }): Promise<EventArtistWithArtistRecord>;
-  update(args: {
-    where: { eventId_artistId: { eventId: string; artistId: string } };
-    data: Record<string, unknown>;
-    include: { artist: true };
-  }): Promise<EventArtistWithArtistRecord>;
+  create(args: EventArtistCreateArgs): Promise<EventArtistWithArtistRecord>;
+  update(args: EventArtistUpdateArgs): Promise<EventArtistWithArtistRecord>;
   deleteMany(args: { where: { eventId: string; artistId: string } }): Promise<{ count: number }>;
   findMany(args: {
     where: Record<string, unknown>;
@@ -232,14 +249,16 @@ export async function linkArtistToEvent(
       await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { id: true } });
       await tx.artist.findUniqueOrThrow({ where: { id: input.artistId }, select: { id: true } });
 
+      const data: EventArtistCreateArgs["data"] = {
+        eventId,
+        artistId: input.artistId,
+        billingOrder: input.billingOrder,
+        billingLabel: input.billingLabel,
+        isPrimary: input.isPrimary ?? false
+      };
+
       const link = await tx.eventArtist.create({
-        data: {
-          eventId,
-          artistId: input.artistId,
-          billingOrder: input.billingOrder,
-          billingLabel: input.billingLabel,
-          isPrimary: input.isPrimary ?? false
-        },
+        data,
         include: { artist: true }
       });
 
@@ -276,13 +295,15 @@ export async function updateEventArtist(
   input: EventArtistUpdateInput
 ): Promise<EventArtistResponse> {
   try {
+    const data: EventArtistUpdateArgs["data"] = {
+      billingOrder: input.billingOrder === undefined ? undefined : input.billingOrder,
+      billingLabel: input.billingLabel === undefined ? undefined : input.billingLabel,
+      isPrimary: input.isPrimary === undefined ? undefined : input.isPrimary
+    };
+
     const link = await db.eventArtist.update({
       where: { eventId_artistId: { eventId, artistId } },
-      data: {
-        billingOrder: input.billingOrder === undefined ? undefined : input.billingOrder,
-        billingLabel: input.billingLabel === undefined ? undefined : input.billingLabel,
-        isPrimary: input.isPrimary === undefined ? undefined : input.isPrimary
-      },
+      data,
       include: { artist: true }
     });
 
