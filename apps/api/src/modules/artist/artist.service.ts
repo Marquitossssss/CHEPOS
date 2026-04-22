@@ -1,130 +1,4 @@
-type ArtistRecord = {
-  id: string;
-  slug: string;
-  displayName: string;
-  legalOrFullName: string | null;
-  shortBio: string | null;
-  profileImageUrl: string | null;
-  genreTagsJson: unknown;
-  externalLinksJson: unknown;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-type EventSummaryRecord = {
-  id: string;
-  organizerId: string;
-  name: string;
-  slug: string;
-  timezone: string;
-  startsAt: Date;
-  endsAt: Date;
-  visibility: "draft" | "published" | "hidden";
-  capacity: number;
-};
-
-type EventArtistRecord = {
-  id: string;
-  eventId: string;
-  artistId: string;
-  billingOrder: number | null;
-  billingLabel: string | null;
-  isPrimary: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-type EventArtistWithArtistRecord = EventArtistRecord & {
-  artist: ArtistRecord;
-};
-
-type EventArtistWithEventRecord = EventArtistRecord & {
-  event: EventSummaryRecord;
-};
-
-type ArtistDelegate = {
-  create(args: { data: Record<string, unknown> }): Promise<ArtistRecord>;
-  update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<ArtistRecord>;
-  findMany(args: {
-    where: Record<string, unknown>;
-    orderBy: Array<Record<string, unknown>>;
-    take: number;
-  }): Promise<ArtistRecord[]>;
-  findUnique(args: { where: { id: string }; select: { id: true } }): Promise<{ id: string } | null>;
-  findUniqueOrThrow(args: { where: { id: string }; select: { id: true } }): Promise<{ id: string }>;
-};
-
-type EventDelegate = {
-  findUnique(args: { where: { id: string }; select: { id: true } }): Promise<{ id: string } | null>;
-  findUniqueOrThrow(args: { where: { id: string }; select: { id: true } }): Promise<{ id: string }>;
-};
-
-type EventArtistCreateArgs = {
-  data: {
-    eventId: string;
-    artistId: string;
-    billingOrder?: number | null;
-    billingLabel?: string | null;
-    isPrimary?: boolean;
-  };
-  include: { artist: true };
-};
-
-type EventArtistUpdateArgs = {
-  where: { eventId_artistId: { eventId: string; artistId: string } };
-  data: {
-    billingOrder?: number | null;
-    billingLabel?: string | null;
-    isPrimary?: boolean;
-  };
-  include: { artist: true };
-};
-
-type EventArtistDelegate = {
-  create(args: EventArtistCreateArgs): Promise<EventArtistWithArtistRecord>;
-  update(args: EventArtistUpdateArgs): Promise<EventArtistWithArtistRecord>;
-  deleteMany(args: { where: { eventId: string; artistId: string } }): Promise<{ count: number }>;
-  findMany(args: {
-    where: Record<string, unknown>;
-    include: { artist: true };
-    orderBy: Array<Record<string, unknown>>;
-  }): Promise<EventArtistWithArtistRecord[]>;
-  findMany(args: {
-    where: Record<string, unknown>;
-    include: { event: { select: Record<string, true> } };
-    orderBy: Array<Record<string, unknown>>;
-  }): Promise<EventArtistWithEventRecord[]>;
-};
-
-type ArtistDb = {
-  artist: ArtistDelegate;
-};
-
-type EventArtistDb = {
-  eventArtist: EventArtistDelegate;
-};
-
-type EventArtistListDb = {
-  event: EventDelegate;
-  eventArtist: EventArtistDelegate;
-};
-
-type ArtistEventsDb = {
-  artist: ArtistDelegate;
-  eventArtist: EventArtistDelegate;
-};
-
-type ArtistLinkTransaction = {
-  event: EventDelegate;
-  artist: ArtistDelegate;
-  eventArtist: EventArtistDelegate;
-};
-
-type ArtistLinkDb = {
-  $transaction<T>(fn: (tx: ArtistLinkTransaction) => Promise<T>): Promise<T>;
-};
-
+import type { prisma as prismaClient } from "../../lib/prisma.js";
 import type {
   ArtistEventListResponse,
   ArtistEventsListQueryInput,
@@ -137,6 +11,57 @@ import type {
   EventArtistUpdateInput,
   UpdateArtistInput
 } from "@articket/shared";
+
+type PrismaClientLike = typeof prismaClient;
+type ArtistDb = Pick<PrismaClientLike, "artist">;
+type EventArtistDb = Pick<PrismaClientLike, "eventArtist">;
+type EventArtistListDb = Pick<PrismaClientLike, "event" | "eventArtist">;
+type ArtistEventsDb = Pick<PrismaClientLike, "artist" | "eventArtist">;
+type ArtistLinkTransaction = Parameters<Parameters<PrismaClientLike["$transaction"]>[0]>[0];
+type ArtistLinkDb = Pick<PrismaClientLike, "$transaction">;
+
+type ArtistRecord = Awaited<ReturnType<ArtistDb["artist"]["create"]>>;
+type EventArtistCreateArgs = Parameters<ArtistLinkTransaction["eventArtist"]["create"]>[0];
+type EventArtistUpdateArgs = Parameters<EventArtistDb["eventArtist"]["update"]>[0];
+
+type EventArtistWithArtistRecord = {
+  id: string;
+  eventId: string;
+  artistId: string;
+  billingOrder: number | null;
+  billingLabel: string | null;
+  isPrimary: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  artist: ArtistRecord;
+};
+
+type EventArtistWithEventRecord = {
+  id: string;
+  eventId: string;
+  artistId: string;
+  billingOrder: number | null;
+  billingLabel: string | null;
+  isPrimary: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  event: {
+    id: string;
+    organizerId: string;
+    name: string;
+    slug: string;
+    timezone: string;
+    startsAt: Date;
+    endsAt: Date;
+    visibility: "draft" | "published" | "hidden";
+    capacity: number;
+  };
+};
+
+function normalizeJsonInput<T>(value: T | null | undefined): T | undefined {
+  if (value === null || value === undefined) return undefined;
+  return value;
+}
 
 function mapArtist(artist: ArtistRecord): ArtistResponse {
   return {
@@ -176,8 +101,8 @@ export async function createArtist(db: ArtistDb, input: CreateArtistInput): Prom
       legalOrFullName: input.legalOrFullName,
       shortBio: input.shortBio,
       profileImageUrl: input.profileImageUrl,
-      genreTagsJson: input.genreTagsJson,
-      externalLinksJson: input.externalLinksJson,
+      genreTagsJson: normalizeJsonInput(input.genreTagsJson),
+      externalLinksJson: normalizeJsonInput(input.externalLinksJson),
       status: input.status ?? "active"
     }
   });
@@ -199,8 +124,8 @@ export async function updateArtist(
         legalOrFullName: input.legalOrFullName === undefined ? undefined : input.legalOrFullName,
         shortBio: input.shortBio === undefined ? undefined : input.shortBio,
         profileImageUrl: input.profileImageUrl === undefined ? undefined : input.profileImageUrl,
-        genreTagsJson: input.genreTagsJson === undefined ? undefined : input.genreTagsJson,
-        externalLinksJson: input.externalLinksJson === undefined ? undefined : input.externalLinksJson,
+        genreTagsJson: normalizeJsonInput(input.genreTagsJson),
+        externalLinksJson: normalizeJsonInput(input.externalLinksJson),
         status: input.status
       }
     });
@@ -405,7 +330,7 @@ export async function listEventsByArtist(
       { billingOrder: "asc" },
       { createdAt: "asc" }
     ]
-  });
+  }) as EventArtistWithEventRecord[];
 
   return {
     artistId,
