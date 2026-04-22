@@ -2,6 +2,11 @@ export type OrganizerRole = "owner" | "admin" | "staff" | "scanner";
 
 export type AdminCapability =
   | "viewOrganizerSettings"
+  | "updateOrganizerSettings"
+  | "viewOrganizerMembers"
+  | "inviteOrganizerMembers"
+  | "manageOrganizerMemberships"
+  | "revokeOrganizerInvitations"
   | "createEvent"
   | "manageTicketTypes"
   | "viewEventDashboard"
@@ -18,6 +23,11 @@ export type CapabilityMap = Record<AdminCapability, boolean>;
 
 const CAPABILITY_ORDER: AdminCapability[] = [
   "viewOrganizerSettings",
+  "updateOrganizerSettings",
+  "viewOrganizerMembers",
+  "inviteOrganizerMembers",
+  "manageOrganizerMemberships",
+  "revokeOrganizerInvitations",
   "createEvent",
   "manageTicketTypes",
   "viewEventDashboard",
@@ -31,7 +41,19 @@ const CAPABILITY_ORDER: AdminCapability[] = [
 
 const roleCapabilities: Record<OrganizerRole, AdminCapability[]> = {
   owner: CAPABILITY_ORDER,
-  admin: CAPABILITY_ORDER,
+  admin: [
+    "viewOrganizerSettings",
+    "viewOrganizerMembers",
+    "createEvent",
+    "manageTicketTypes",
+    "viewEventDashboard",
+    "operateEvent",
+    "scanTickets",
+    "viewEventActivity",
+    "viewLatePaymentCases",
+    "resolveLatePayments",
+    "resendOrderConfirmation"
+  ],
   staff: [
     "viewEventDashboard",
     "operateEvent",

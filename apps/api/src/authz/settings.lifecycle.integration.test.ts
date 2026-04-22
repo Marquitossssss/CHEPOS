@@ -145,6 +145,25 @@ describe.skipIf(!hasIntegrationEnv)("settings membership lifecycle integration",
     expect(body.role).toBe("staff");
   });
 
+  it("admin can list memberships but cannot manage lifecycle", async () => {
+    const scenario = await seedScenario({ extraAdmin: true });
+    const adminToken = await login(scenario.admin.email, scenario.admin.password);
+
+    const listResponse = await authFetch(`/organizers/${scenario.organizer.id}/memberships`, adminToken);
+    expect(listResponse.status).toBe(200);
+    const listBody = await listResponse.json() as any[];
+    const self = listBody.find((row) => row.membershipId === scenario.adminMembership.id);
+    expect(self.capabilities.viewOrganizerMembers).toBe(true);
+    expect(self.capabilities.manageOrganizerMemberships).toBe(false);
+
+    const removeResponse = await authFetch(
+      `/organizers/${scenario.organizer.id}/memberships/${scenario.secondAdmin!.membershipId}`,
+      adminToken,
+      { method: "DELETE" }
+    );
+    expect(removeResponse.status).toBe(403);
+  });
+
   it("non-owner create forbidden", async () => {
     const scenario = await seedScenario();
     const adminToken = await login(scenario.admin.email, scenario.admin.password);

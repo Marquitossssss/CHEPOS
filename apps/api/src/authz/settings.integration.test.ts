@@ -137,6 +137,22 @@ describe.skipIf(!hasIntegrationEnv)("settings integration", () => {
     expect(response.status).toBe(400);
   });
 
+  it("admin cannot mutate membership roles", async () => {
+    const scenario = await seedScenario();
+    const adminToken = await login(scenario.admin.email, scenario.admin.password);
+
+    const response = await authFetch(
+      `/organizers/${scenario.organizer.id}/memberships/${scenario.adminMembership.id}/role`,
+      adminToken,
+      {
+        method: "POST",
+        body: JSON.stringify({ role: "staff" })
+      }
+    );
+
+    expect(response.status).toBe(403);
+  });
+
   it("persists AuditLog row with contractual metadata on role change", async () => {
     const scenario = await seedScenario();
     const ownerToken = await login(scenario.owner.email, scenario.owner.password);

@@ -20,12 +20,16 @@ export async function getOrganizerAuthorizationContext(userId: string, organizer
   };
 }
 
-export async function requireOrganizerCapability(app: FastifyInstance, userId: string, organizerId: string, capability: AdminCapability) {
-  const context = await getOrganizerAuthorizationContext(userId, organizerId);
+export function assertOrganizerCapability(app: FastifyInstance, context: AdminAuthorizationContext | null, capability: AdminCapability) {
   if (!context || !hasAdminCapability(context.organizerRole, capability)) {
     throw app.httpErrors.forbidden("Sin permisos para este organizador");
   }
   return context;
+}
+
+export async function requireOrganizerCapability(app: FastifyInstance, userId: string, organizerId: string, capability: AdminCapability) {
+  const context = await getOrganizerAuthorizationContext(userId, organizerId);
+  return assertOrganizerCapability(app, context, capability);
 }
 
 export async function requireEventCapability(app: FastifyInstance, userId: string, eventId: string, capability: AdminCapability) {
