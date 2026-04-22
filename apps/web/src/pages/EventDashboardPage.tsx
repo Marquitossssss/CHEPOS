@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Line, LineChart, CartesianGrid, Tooltip, XAxis, YAxis, ResponsiveContainer, Legend } from "recharts";
 import { api } from "../api/client";
+import { EventArtistLinkagePanel } from "./EventArtistLinkagePanel";
 
 type Organizer = { id: string; name: string; slug: string };
 type EventRow = { id: string; organizerId: string; name: string; slug: string };
@@ -48,10 +49,22 @@ function getVisualRole(): VisualRole {
   return "admin";
 }
 
+function toAuthorization(role: VisualRole) {
+  switch (role) {
+    case "scanner":
+      return { organizerRole: "scanner" as const };
+    case "staff":
+      return { organizerRole: "staff" as const };
+    default:
+      return { organizerRole: "admin" as const };
+  }
+}
+
 export function EventDashboardPage() {
   const { organizerSlug = "", eventSlug = "" } = useParams();
   const [range, setRange] = useState<(typeof ranges)[number]>("7d");
   const role = getVisualRole();
+  const authorization = toAuthorization(role);
 
   const organizersQuery = useQuery({ queryKey: ["organizers"], queryFn: () => api<Organizer[]>("/organizers") });
 
@@ -235,6 +248,8 @@ export function EventDashboardPage() {
           </div>
         </section>
       ) : null}
+
+      <EventArtistLinkagePanel eventId={data.event.id} authorization={authorization} />
 
       {role !== "scanner" ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5">

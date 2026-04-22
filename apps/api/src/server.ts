@@ -16,6 +16,16 @@ import {
   organizerMemberCreateInputSchema,
   organizerMemberCreateResultSchema,
   organizerMemberRemoveResultSchema,
+  artistEventListResponseSchema,
+  artistEventsListQuerySchema,
+  artistListQuerySchema,
+  artistResponseSchema,
+  createArtistSchema,
+  eventArtistLinkCreateSchema,
+  eventArtistListResponseSchema,
+  eventArtistResponseSchema,
+  eventArtistUpdateSchema,
+  updateArtistSchema,
   type OrganizerMemberListItem
 } from "@articket/shared";
 import { prisma } from "./lib/prisma.js";
@@ -39,6 +49,7 @@ import {
 } from "./observability/metrics.js";
 import { ACTIVITY_EVENT_TYPES, type ActivityEventType, fetchEventActivity } from "./modules/activity/service.js";
 import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.routes.js";
+import { createArtist, linkArtistToEvent, listArtists, listArtistsByEvent, listEventsByArtist, unlinkArtistFromEvent, updateArtist, updateEventArtist } from "./modules/artist/artist.service.js";
 import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
 import { materializePayment } from "./modules/payments/materializePayment.js";
 import { registerOrganizerInvitationRoutes } from "./routes/organizerInvitations.routes.js";
@@ -525,6 +536,130 @@ app.delete("/organizers/:id/memberships/:membershipId", { preHandler: verifyAuth
   });
 
   return organizerMemberRemoveResultSchema.parse(result);
+});
+
+app.get("/artists", async (req: any) => {
+  const query = artistListQuerySchema.parse(req.query ?? {});
+  return z.array(artistResponseSchema).parse(await listArtists(prisma, query));
+});
+
+app.post("/artists", { preHandler: verifyAuth }, async (req: any) => {
+  const body = createArtistSchema.parse(req.body ?? {});
+  const user = req.user as JwtPayload;
+  const organizerId = z.string().uuid().parse(req.headers["x-organizer-id"]);
+
+  await requireOrganizerCapability(app, user.userId, organizerId, "createEvent");
+
+  try {
+    return artistResponseSchema.parse(await createArtist(prisma, body));
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      throw app.httpErrors.conflict("Artist slug already exists");
+    }
+    throw error;
+  }
+});
+
+app.put("/artists/:artistId", { preHandler: verifyAuth }, async (req: any) => {
+  const params = z.object({ artistId: z.string().uuid() }).parse(req.params ?? {});
+  const body = updateArtistSchema.parse(req.body ?? {});
+  const user = req.user as JwtPayload;
+  const organizerId = z.string().uuid().parse(req.headers["x-organizer-id"]);
+
+  await requireOrganizerCapability(app, user.userId, organizerId, "createEvent");
+
+  try {
+    return artistResponseSchema.parse(await updateArtist(prisma, params.artistId, body));
+  } catch (error: any) {
+    if (error?.code === "ARTIST_NOT_FOUND") {
+      throw app.httpErrors.notFound("Artist no encontrado");
+    }
+    if (error?.code === "P2002") {
+      throw app.httpErrors.conflict("Artist slug already exists");
+    }
+    throw error;
+  }
+});
+
+app.get("/events/:eventId/artists", async (req: any) => {
+  const params = z.object({ eventId: z.string().uuid() }).parse(req.params ?? {});
+
+  try {
+    return eventArtistListResponseSchema.parse(await listArtistsByEvent(prisma, params.eventId));
+  } catch (error: any) {
+    if (error?.code === "EVENT_NOT_FOUND") {
+      throw app.httpErrors.notFound("Evento no encontrado");
+    }
+    throw error;
+  }
+});
+
+app.get("/artists/:artistId/events", async (req: any) => {
+  const params = z.object({ artistId: z.string().uuid() }).parse(req.params ?? {});
+  const query = artistEventsListQuerySchema.parse(req.query ?? {});
+
+  try {
+    return artistEventListResponseSchema.parse(await listEventsByArtist(prisma, params.artistId, query));
+  } catch (error: any) {
+    if (error?.code === "ARTIST_NOT_FOUND") {
+      throw app.httpErrors.notFound("Artist no encontrado");
+    }
+    throw error;
+  }
+});
+
+app.post("/events/:eventId/artists", { preHandler: verifyAuth }, async (req: any) => {
+  const params = z.object({ eventId: z.string().uuid() }).parse(req.params ?? {});
+  const body = eventArtistLinkCreateSchema.parse(req.body ?? {});
+  const user = req.user as JwtPayload;
+
+  await requireEventCapability(app, user.userId, params.eventId, "manageTicketTypes");
+
+  try {
+    return eventArtistResponseSchema.parse(await linkArtistToEvent(prisma as any, params.eventId, body));
+  } catch (error: any) {
+    if (error?.code === "ARTIST_OR_EVENT_NOT_FOUND") {
+      throw app.httpErrors.notFound("Artist o evento no encontrado");
+    }
+    if (error?.code === "EVENT_ARTIST_DUPLICATE") {
+      throw app.httpErrors.conflict("Artist ya vinculado al evento");
+    }
+    throw error;
+  }
+});
+
+app.put("/events/:eventId/artists/:artistId", { preHandler: verifyAuth }, async (req: any) => {
+  const params = z.object({ eventId: z.string().uuid(), artistId: z.string().uuid() }).parse(req.params ?? {});
+  const body = eventArtistUpdateSchema.parse(req.body ?? {});
+  const user = req.user as JwtPayload;
+
+  await requireEventCapability(app, user.userId, params.eventId, "manageTicketTypes");
+
+  try {
+    return eventArtistResponseSchema.parse(await updateEventArtist(prisma, params.eventId, params.artistId, body));
+  } catch (error: any) {
+    if (error?.code === "EVENT_ARTIST_LINK_NOT_FOUND") {
+      throw app.httpErrors.notFound("Vínculo artist-event no encontrado");
+    }
+    throw error;
+  }
+});
+
+app.delete("/events/:eventId/artists/:artistId", { preHandler: verifyAuth }, async (req: any) => {
+  const params = z.object({ eventId: z.string().uuid(), artistId: z.string().uuid() }).parse(req.params ?? {});
+  const user = req.user as JwtPayload;
+
+  await requireEventCapability(app, user.userId, params.eventId, "manageTicketTypes");
+
+  try {
+    await unlinkArtistFromEvent(prisma, params.eventId, params.artistId);
+    return { eventId: params.eventId, artistId: params.artistId, removed: true };
+  } catch (error: any) {
+    if (error?.code === "EVENT_ARTIST_LINK_NOT_FOUND") {
+      throw app.httpErrors.notFound("Vínculo artist-event no encontrado");
+    }
+    throw error;
+  }
 });
 
 app.post("/events/:id/ticket-types", { preHandler: verifyAuth }, async (req: any) => {
