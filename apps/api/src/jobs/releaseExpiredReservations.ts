@@ -7,6 +7,8 @@ import { ttlReleasedTotal, ttlRestoredUnitsTotal, ttlSkippedAlreadyReleasedTotal
 type ReleaseExpiredSummary = {
   expiredOrders: number;
   releasedReservations: number;
+  // Best-effort per-run telemetry under concurrent job overlap.
+  // Strong correctness contract is the durable final state in DB, not exact per-run attribution.
   restoredUnits: number;
   skippedAlreadyReleased: number;
 };
@@ -18,7 +20,8 @@ export async function releaseExpiredReservationsTx(
 ): Promise<ReleaseExpiredSummary> {
   const expiredOrders = await tx.order.findMany({
     where: { status: "reserved", reservedUntil: { lt: now } },
-    select: { id: true, organizerId: true, eventId: true }
+    select: { id: true, organizerId: true, eventId: true },
+    orderBy: { id: "asc" }
   });
 
   if (expiredOrders.length === 0) {
@@ -30,64 +33,90 @@ export async function releaseExpiredReservationsTx(
     };
   }
 
-  const orderIds = expiredOrders.map((order) => order.id);
-
-  const activeReservations = await tx.inventoryReservation.findMany({
-    where: {
-      orderId: { in: orderIds },
-      expiresAt: { lt: now },
-      releasedAt: null
-    },
-    select: {
-      id: true,
-      orderId: true,
-      ticketTypeId: true,
-      quantity: true
-    }
-  });
-
-  const alreadyReleasedCount = await tx.inventoryReservation.count({
-    where: {
-      orderId: { in: orderIds },
-      expiresAt: { lt: now },
-      releasedAt: { not: null }
-    }
-  });
-
-  const restoreByTicketType = new Map<string, number>();
-  for (const reservation of activeReservations) {
-    restoreByTicketType.set(
-      reservation.ticketTypeId,
-      (restoreByTicketType.get(reservation.ticketTypeId) ?? 0) + reservation.quantity
-    );
-  }
-
-  const ticketTypeIds = [...restoreByTicketType.keys()].sort();
-  for (const ticketTypeId of ticketTypeIds) {
-    await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${ticketTypeId} AS uuid) FOR UPDATE`;
-  }
-
-  for (const [ticketTypeId, quantity] of restoreByTicketType.entries()) {
-    await tx.ticketType.update({
-      where: { id: ticketTypeId },
-      data: { remaining: { increment: quantity } }
-    });
-  }
-
-  const releasedReservationIds = activeReservations.map((reservation) => reservation.id);
-  if (releasedReservationIds.length > 0) {
-    await tx.inventoryReservation.updateMany({
-      where: { id: { in: releasedReservationIds }, releasedAt: null },
-      data: { releasedAt: now, releaseReason: "expired_ttl" }
-    });
-  }
-
-  await tx.order.updateMany({
-    where: { id: { in: orderIds }, status: "reserved", reservedUntil: { lt: now } },
-    data: { status: "expired" }
-  });
+  const expiredOrderIds: string[] = [];
+  const expiredOrdersForEvents: typeof expiredOrders = [];
+  let releasedReservations = 0;
+  let restoredUnits = 0;
+  let skippedAlreadyReleased = 0;
 
   for (const order of expiredOrders) {
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = CAST(${order.id} AS uuid) FOR UPDATE`;
+
+    const currentOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { id: true, status: true, reservedUntil: true }
+    });
+
+    if (!currentOrder || currentOrder.status !== "reserved" || !currentOrder.reservedUntil || currentOrder.reservedUntil >= now) {
+      continue;
+    }
+
+    const expireOrder = await tx.order.updateMany({
+      where: { id: order.id, status: "reserved", reservedUntil: { lt: now } },
+      data: { status: "expired" }
+    });
+
+    if (expireOrder.count === 0) {
+      continue;
+    }
+
+    const activeReservations = await tx.inventoryReservation.findMany({
+      where: {
+        orderId: order.id,
+        expiresAt: { lt: now },
+        releasedAt: null
+      },
+      select: {
+        id: true,
+        ticketTypeId: true,
+        quantity: true
+      },
+      orderBy: { id: "asc" }
+    });
+
+    const alreadyReleasedCount = await tx.inventoryReservation.count({
+      where: {
+        orderId: order.id,
+        expiresAt: { lt: now },
+        releasedAt: { not: null }
+      }
+    });
+    skippedAlreadyReleased += alreadyReleasedCount;
+
+    const restoreByTicketType = new Map<string, number>();
+    for (const reservation of activeReservations) {
+      restoreByTicketType.set(
+        reservation.ticketTypeId,
+        (restoreByTicketType.get(reservation.ticketTypeId) ?? 0) + reservation.quantity
+      );
+    }
+
+    const ticketTypeIds = [...restoreByTicketType.keys()].sort();
+    for (const ticketTypeId of ticketTypeIds) {
+      await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${ticketTypeId} AS uuid) FOR UPDATE`;
+    }
+
+    for (const reservation of activeReservations) {
+      const released = await tx.inventoryReservation.updateMany({
+        where: { id: reservation.id, releasedAt: null },
+        data: { releasedAt: now, releaseReason: "expired_ttl" }
+      });
+
+      if (released.count === 0) continue;
+
+      await tx.ticketType.update({
+        where: { id: reservation.ticketTypeId },
+        data: { remaining: { increment: reservation.quantity } }
+      });
+      releasedReservations += 1;
+      restoredUnits += reservation.quantity;
+    }
+
+    expiredOrderIds.push(order.id);
+    expiredOrdersForEvents.push(order);
+  }
+
+  for (const order of expiredOrdersForEvents) {
     await emitDomainEvent({
       type: DomainEventName.ORDER_EXPIRED,
       correlationId,
@@ -103,10 +132,10 @@ export async function releaseExpiredReservationsTx(
   }
 
   return {
-    expiredOrders: expiredOrders.length,
-    releasedReservations: activeReservations.length,
-    restoredUnits: [...restoreByTicketType.values()].reduce((sum, value) => sum + value, 0),
-    skippedAlreadyReleased: alreadyReleasedCount
+    expiredOrders: expiredOrderIds.length,
+    releasedReservations,
+    restoredUnits,
+    skippedAlreadyReleased
   };
 }
 
