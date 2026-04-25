@@ -101,8 +101,8 @@ export const ttlReleasedTotal = getOrCreateCounter(
 
 export const ttlSkippedTotal = getOrCreateCounter(
   "ttl_skipped_total",
-  "Total de órdenes salteadas por el job TTL (ya procesadas por otro worker o pago)",
-  []
+  "Total de corridas salteadas por el job TTL",
+  ["reason"]
 );
 
 export const ttlErrorsTotal = getOrCreateCounter(

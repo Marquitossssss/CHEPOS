@@ -2,9 +2,14 @@ import type { Prisma } from "@prisma/client";
 import { emitDomainEvent } from "../lib/domainEvents.js";
 import { prisma } from "../lib/prisma.js";
 import { DomainEventName } from "../domain/events.js";
-import { ttlReleasedTotal, ttlRestoredUnitsTotal, ttlSkippedAlreadyReleasedTotal } from "../observability/metrics.js";
+import { ttlReleasedTotal, ttlRestoredUnitsTotal, ttlSkippedAlreadyReleasedTotal, ttlSkippedTotal } from "../observability/metrics.js";
+
+const TTL_RELEASE_LOCK_NAMESPACE = 42_001;
+const TTL_RELEASE_LOCK_KEY = 15_001;
 
 type ReleaseExpiredSummary = {
+  status: "processed" | "skipped";
+  skipReason: "lock_not_acquired" | null;
   expiredOrders: number;
   releasedReservations: number;
   // Best-effort per-run telemetry under concurrent job overlap.
@@ -12,6 +17,29 @@ type ReleaseExpiredSummary = {
   restoredUnits: number;
   skippedAlreadyReleased: number;
 };
+
+type ReleaseExpiredReservationsOptions = {
+  afterLockAcquired?: () => Promise<void>;
+};
+
+async function tryAcquireReleaseExpiredReservationsLock(tx: Prisma.TransactionClient): Promise<boolean> {
+  const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_try_advisory_xact_lock(CAST(${TTL_RELEASE_LOCK_NAMESPACE} AS integer), CAST(${TTL_RELEASE_LOCK_KEY} AS integer)) AS "locked"
+  `;
+
+  return row?.locked === true;
+}
+
+function lockSkippedSummary(): ReleaseExpiredSummary {
+  return {
+    status: "skipped",
+    skipReason: "lock_not_acquired",
+    expiredOrders: 0,
+    releasedReservations: 0,
+    restoredUnits: 0,
+    skippedAlreadyReleased: 0
+  };
+}
 
 export async function releaseExpiredReservationsTx(
   tx: Prisma.TransactionClient,
@@ -27,6 +55,8 @@ export async function releaseExpiredReservationsTx(
   if (expiredOrders.length === 0) {
     return {
       expiredOrders: 0,
+      status: "processed",
+      skipReason: null,
       releasedReservations: 0,
       restoredUnits: 0,
       skippedAlreadyReleased: 0
@@ -132,6 +162,8 @@ export async function releaseExpiredReservationsTx(
   }
 
   return {
+    status: "processed",
+    skipReason: null,
     expiredOrders: expiredOrderIds.length,
     releasedReservations,
     restoredUnits,
@@ -139,10 +171,20 @@ export async function releaseExpiredReservationsTx(
   };
 }
 
-export async function releaseExpiredReservations(now = new Date()): Promise<ReleaseExpiredSummary> {
-  const summary = await prisma.$transaction((tx) =>
-    releaseExpiredReservationsTx(tx, now)
-  );
+export async function releaseExpiredReservations(now = new Date(), options: ReleaseExpiredReservationsOptions = {}): Promise<ReleaseExpiredSummary> {
+  const summary = await prisma.$transaction(async (tx) => {
+    const lockAcquired = await tryAcquireReleaseExpiredReservationsLock(tx);
+    if (!lockAcquired) return lockSkippedSummary();
+
+    await options.afterLockAcquired?.();
+
+    return releaseExpiredReservationsTx(tx, now);
+  });
+
+  if (summary.skipReason === "lock_not_acquired") {
+    ttlSkippedTotal.inc({ reason: "lock_not_acquired" });
+    console.info({ job: "releaseExpiredReservations", reason: summary.skipReason }, "TTL release job skipped");
+  }
 
   if (summary.expiredOrders > 0) {
     ttlReleasedTotal.inc(summary.expiredOrders);

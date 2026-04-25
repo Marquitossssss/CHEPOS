@@ -17,6 +17,7 @@ describe.skipIf(!hasIntegrationEnv)("releaseExpiredReservations", () => {
       await prisma.inventoryReservation.deleteMany({ where: { id: { in: created.reservationIds } } });
     }
     if (created.orderIds.length > 0) {
+      await prisma.domainEvent.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.orderItem.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.order.deleteMany({ where: { id: { in: created.orderIds } } });
     }
@@ -120,6 +121,8 @@ describe.skipIf(!hasIntegrationEnv)("releaseExpiredReservations", () => {
     const reservation = await prisma.inventoryReservation.findUniqueOrThrow({ where: { id: seeded.reservation.id } });
 
     expect(summary.expiredOrders).toBeGreaterThanOrEqual(1);
+    expect(summary.status).toBe("processed");
+    expect(summary.skipReason).toBeNull();
     expect(summary.releasedReservations).toBeGreaterThanOrEqual(1);
     expect(summary.restoredUnits).toBeGreaterThanOrEqual(2);
     expect(ticketType.remaining).toBe(10);
@@ -138,6 +141,62 @@ describe.skipIf(!hasIntegrationEnv)("releaseExpiredReservations", () => {
     expect(first.restoredUnits).toBeGreaterThanOrEqual(3);
     expect(second.restoredUnits).toBe(0);
     expect(ticketType.remaining).toBe(10);
+  });
+
+  it("dos ejecuciones concurrentes son single-writer: una procesa y la otra hace skip por lock", async () => {
+    const seeded = await seedExpiredReservation({ remaining: 6, quantity: 4 });
+
+    let releaseFirstLock!: () => void;
+    const firstMayContinue = new Promise<void>((resolve) => {
+      releaseFirstLock = resolve;
+    });
+
+    let firstHasLock!: () => void;
+    const firstLockAcquired = new Promise<void>((resolve) => {
+      firstHasLock = resolve;
+    });
+
+    const firstRun = releaseExpiredReservations(new Date(), {
+      afterLockAcquired: async () => {
+        firstHasLock();
+        await firstMayContinue;
+      }
+    });
+
+    await firstLockAcquired;
+
+    const secondRun = releaseExpiredReservations(new Date(Date.now() + 1000));
+    const second = await secondRun;
+
+    releaseFirstLock();
+    const first = await firstRun;
+
+    const summaries = [first, second];
+    const processed = summaries.filter((summary) => summary.status === "processed");
+    const skipped = summaries.filter((summary) => summary.skipReason === "lock_not_acquired");
+
+    const ticketType = await prisma.ticketType.findUniqueOrThrow({ where: { id: seeded.ticketType.id } });
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: seeded.order.id } });
+    const reservation = await prisma.inventoryReservation.findUniqueOrThrow({ where: { id: seeded.reservation.id } });
+    const orderExpiredEvents = await prisma.domainEvent.count({ where: { orderId: seeded.order.id, type: "ORDER_EXPIRED" } });
+
+    expect(processed).toHaveLength(1);
+    expect(skipped).toHaveLength(1);
+    expect(processed[0].expiredOrders).toBeGreaterThanOrEqual(1);
+    expect(processed[0].releasedReservations).toBeGreaterThanOrEqual(1);
+    expect(processed[0].restoredUnits).toBeGreaterThanOrEqual(4);
+    expect(skipped[0]).toMatchObject({
+      status: "skipped",
+      skipReason: "lock_not_acquired",
+      expiredOrders: 0,
+      releasedReservations: 0,
+      restoredUnits: 0
+    });
+    expect(ticketType.remaining).toBe(10);
+    expect(order.status).toBe("expired");
+    expect(reservation.releasedAt).toBeTruthy();
+    expect(reservation.releaseReason).toBe("expired_ttl");
+    expect(orderExpiredEvents).toBe(1);
   });
 
   it("reservations ya liberadas no vuelven a tocar stock", async () => {
