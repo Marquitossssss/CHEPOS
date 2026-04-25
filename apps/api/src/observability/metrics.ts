@@ -101,12 +101,24 @@ export const ttlReleasedTotal = getOrCreateCounter(
 
 export const ttlSkippedTotal = getOrCreateCounter(
   "ttl_skipped_total",
-  "Total de órdenes salteadas por el job TTL (ya procesadas por otro worker o pago)",
-  []
+  "Total de corridas salteadas por el job TTL",
+  ["reason"]
 );
 
 export const ttlErrorsTotal = getOrCreateCounter(
   "ttl_errors_total",
   "Total de errores del job TTL al procesar órdenes individuales",
+  []
+);
+
+export const ttlRestoredUnitsTotal = getOrCreateCounter(
+  "ttl_restored_units_total",
+  "Total de unidades de inventory restituidas por el job TTL",
+  []
+);
+
+export const ttlSkippedAlreadyReleasedTotal = getOrCreateCounter(
+  "ttl_skipped_already_released_total",
+  "Total de reservations ya liberadas y salteadas por el job TTL",
   []
 );

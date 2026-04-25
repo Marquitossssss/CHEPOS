@@ -97,9 +97,37 @@ export async function applyPaymentEvent(paymentEventId: string, correlationId: s
       }
 
       const reservationExpired = !!order.reservedUntil && order.reservedUntil < new Date();
+      const activeReservations = order.reservations.filter((reservation) => reservation.releasedAt === null);
+      const hasActiveReservations = activeReservations.length > 0;
 
       if (reservationExpired) {
-        // TODO(ADR-0003): replace deterministic fallback with atomic remaining_inventory reservation.
+        const restoreByTicketType = new Map<string, number>();
+        for (const reservation of activeReservations) {
+          restoreByTicketType.set(
+            reservation.ticketTypeId,
+            (restoreByTicketType.get(reservation.ticketTypeId) ?? 0) + reservation.quantity
+          );
+        }
+
+        const ticketTypeIds = [...restoreByTicketType.keys()].sort();
+        for (const ticketTypeId of ticketTypeIds) {
+          await tx.$queryRaw`SELECT id FROM "TicketType" WHERE id = CAST(${ticketTypeId} AS uuid) FOR UPDATE`;
+        }
+
+        for (const [ticketTypeId, quantity] of restoreByTicketType.entries()) {
+          await tx.ticketType.update({
+            where: { id: ticketTypeId },
+            data: { remaining: { increment: quantity } }
+          });
+        }
+
+        if (activeReservations.length > 0) {
+          await tx.inventoryReservation.updateMany({
+            where: { id: { in: activeReservations.map((reservation) => reservation.id) }, releasedAt: null },
+            data: { releasedAt: new Date(), releaseReason: "expired_payment_compensation" }
+          });
+        }
+
         await tx.order.update({ where: { id: order.id }, data: { status: "paid_no_stock" } });
         await emitDomainEvent({
           type: DomainEventName.PAYMENT_MARKED_NO_STOCK,
@@ -110,8 +138,15 @@ export async function applyPaymentEvent(paymentEventId: string, correlationId: s
           organizerId: order.organizerId,
           eventId: order.eventId,
           orderId: order.id,
-          context: { source: "webhooks.payments", provider: paymentEvent.provider },
-          payload: { paymentEventId: paymentEvent.id }
+          context: {
+            source: "webhooks.payments",
+            provider: paymentEvent.provider,
+            reservationReleased: hasActiveReservations
+          },
+          payload: {
+            paymentEventId: paymentEvent.id,
+            releasedReservationCount: activeReservations.length
+          }
         }, tx);
         await markEventProcessed(tx, paymentEvent.id, { ignoredReason: null });
         return { ok: true, outcome: "paid_no_stock" };
