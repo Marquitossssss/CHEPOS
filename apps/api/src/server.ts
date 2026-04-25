@@ -1206,7 +1206,7 @@ app.get("/late-payment-cases", { preHandler: verifyAuth }, async (req: any) => {
     })
     .parse(req.query ?? {});
 
-  await requireMembership(user.userId, query.organizerId, ["owner", "admin", "staff"]);
+  await requireOrganizerCapability(app, user.userId, query.organizerId, "viewLatePaymentCases");
 
   return prisma.latePaymentCase.findMany({
     where: {
@@ -1223,6 +1223,34 @@ app.get("/late-payment-cases", { preHandler: verifyAuth }, async (req: any) => {
         : {}),
       order: { organizerId: query.organizerId }
     },
+    select: {
+      id: true,
+      createdAt: true,
+      updatedAt: true,
+      version: true,
+      orderId: true,
+      reserveId: true,
+      provider: true,
+      providerPaymentId: true,
+      paymentAttemptId: true,
+      inventoryReleased: true,
+      status: true,
+      detectedAt: true,
+      resolutionNotes: true,
+      resolvedAt: true,
+      resolvedBy: true,
+      order: {
+        select: {
+          id: true,
+          organizerId: true,
+          eventId: true,
+          status: true,
+          totalCents: true,
+          reservedUntil: true,
+          latePaymentReviewRequired: true
+        }
+      }
+    },
     orderBy: { detectedAt: "desc" },
     take: query.limit
   });
@@ -1234,7 +1262,7 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
   const body = z
     .object({
       action: z.enum(["ACCEPT", "REJECT", "REFUND_REQUESTED", "REFUNDED"]),
-      resolutionNotes: z.string().max(2000).optional()
+      resolutionNotes: z.string().trim().min(1).max(2000)
     })
     .parse(req.body ?? {});
 
@@ -1302,6 +1330,34 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
       data: { latePaymentReviewRequired: false }
     });
 
+    const audit = await tx.auditLog.create({
+      data: {
+        organizerId: lateCase.order.organizerId,
+        actorUserId: user.userId,
+        action: "late_payment_case.resolve",
+        entityType: "LatePaymentCase",
+        entityId: lateCase.id,
+        metadata: {
+          correlationId: req.correlationId,
+          orderId: lateCase.order.id,
+          previous: {
+            status: lateCase.status,
+            resolutionNotes: lateCase.resolutionNotes,
+            resolvedAt: lateCase.resolvedAt?.toISOString() ?? null,
+            resolvedBy: lateCase.resolvedBy,
+            version: lateCase.version
+          },
+          next: {
+            status: nextStatus,
+            resolutionNotes: body.resolutionNotes,
+            resolvedAt: resolvedAt.toISOString(),
+            resolvedBy: user.userId,
+            version: lateCase.version + 1
+          }
+        }
+      }
+    });
+
     await emitDomainEvent({
       type: DomainEventName.LATE_PAYMENT_CASE_RESOLVED,
       correlationId: req.correlationId,
@@ -1318,7 +1374,8 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
         action: body.action,
         previousStatus: lateCase.status,
         status: nextStatus,
-        resolutionNotes: body.resolutionNotes ?? null
+        resolutionNotes: body.resolutionNotes,
+        auditLogId: audit.id
       }
     }, tx);
 
@@ -1336,6 +1393,7 @@ app.post("/late-payment-cases/:id/resolve", { preHandler: verifyAuth }, async (r
   }, "late payment case resolved");
 
   await syncLatePaymentPendingGauge(updated.provider);
+  latePaymentCasesTotal.inc({ provider: updated.provider, reason: "resolved" });
 
   return updated;
 });
@@ -1405,6 +1463,9 @@ app.post<{ Params: { provider: string } }>("/webhooks/payments/:provider", async
       const applyResult = await applyPaymentEvent(created.id, req.correlationId);
       if (["terminal_guard", "unsupported_event_type", "unmatched"].includes(applyResult.outcome)) {
         paymentEventIgnoredTotal.inc({ reason: applyResult.outcome });
+      }
+      if (applyResult.outcome === "paid_no_stock") {
+        await syncLatePaymentPendingGauge(provider);
       }
       req.log.info({
         correlationId: req.correlationId,

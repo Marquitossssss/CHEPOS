@@ -49,6 +49,7 @@ describe.skipIf(!hasIntegrationEnv)("ticket issue once defense-in-depth", () => 
       await prisma.domainEvent.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.ticketScan.deleteMany({ where: { eventId: { in: created.eventIds } } });
       await prisma.ticket.deleteMany({ where: { orderId: { in: created.orderIds } } });
+      await prisma.latePaymentCase.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.paymentEvent.deleteMany({ where: { provider, providerEventId: { in: created.providerEventIds } } });
       await prisma.payment.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.inventoryReservation.deleteMany({ where: { orderId: { in: created.orderIds } } });

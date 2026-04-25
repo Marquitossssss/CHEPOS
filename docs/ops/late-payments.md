@@ -1,7 +1,14 @@
 # Late Payments Ops Playbook
 
 ## Qué es un LatePaymentCase
-Caso operativo creado cuando llega confirmación de pago tardía y la reserva/inventario ya fue liberada.
+Caso operativo creado cuando llega confirmación de pago tardía y la orden converge a `paid_no_stock`.
+
+Contrato mínimo:
+- `paid_no_stock` significa: el pago quedó registrado, pero llegó después de `reservedUntil`; la orden perdió derecho automático a stock.
+- El webhook tardío registra `Payment`, no emite tickets, libera/restaura cualquier reservation activa y crea un `LatePaymentCase` `PENDING`.
+- La creación es idempotente por `provider + providerPaymentId` y por `orderId + paymentAttemptId`.
+- El caso mantiene trazabilidad a `Order`, `Event`, `Organizer`, `Payment` (`paymentAttemptId`) y provider payment (`providerPaymentId`).
+- Resolver un caso exige motivo (`resolutionNotes`) y deja `DomainEvent` + `AuditLog` con before/after.
 
 ## Estados
 - `PENDING`: pendiente de revisión operativa.
@@ -18,7 +25,13 @@ Caso operativo creado cuando llega confirmación de pago tardía y la reserva/in
    - `detectedAt`
 3. Resolver: `POST /late-payment-cases/:id/resolve`
    - acción: `ACCEPT | REJECT | REFUND_REQUESTED | REFUNDED`
-   - `resolutionNotes` obligatorio recomendado (operación)
+   - `resolutionNotes` obligatorio
+
+## Qué NO hace este flujo
+- No emite tickets manualmente.
+- No ejecuta refunds reales contra PSP.
+- No cambia stock al resolver el caso.
+- No reemplaza un módulo de soporte/helpdesk.
 
 ## Logs a consultar
 - Webhook recibido/replay:
