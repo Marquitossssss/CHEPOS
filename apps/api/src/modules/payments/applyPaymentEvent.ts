@@ -5,6 +5,7 @@ import { emitDomainEvent } from "../../lib/domainEvents.js";
 import { DomainEventName } from "../../domain/events.js";
 import { generateTicketCode } from "../../lib/qr.js";
 import { materializePayment } from "./materializePayment.js";
+import { latePaymentCasesTotal } from "../../observability/metrics.js";
 
 type ApplyResult = { ok: true; outcome: string };
 
@@ -31,6 +32,72 @@ async function markEventProcessed(
       processedAt: new Date()
     }
   });
+}
+
+async function ensureLatePaymentCase(
+  tx: Prisma.TransactionClient,
+  params: {
+    order: { id: string; organizerId: string; eventId: string };
+    paymentEvent: { id: string; provider: string; providerPaymentId: string | null };
+    paymentId: string;
+    reserveId?: string | null;
+    inventoryReleased: boolean;
+    correlationId: string;
+  }
+) {
+  if (!params.paymentEvent.providerPaymentId) return null;
+
+  const existing = await tx.latePaymentCase.findUnique({
+    where: {
+      provider_providerPaymentId: {
+        provider: params.paymentEvent.provider,
+        providerPaymentId: params.paymentEvent.providerPaymentId
+      }
+    }
+  });
+
+  if (existing) {
+    latePaymentCasesTotal.inc({ provider: params.paymentEvent.provider, reason: "duplicate_noop" });
+    return existing;
+  }
+
+  const created = await tx.latePaymentCase.create({
+    data: {
+      orderId: params.order.id,
+      reserveId: params.reserveId ?? null,
+      provider: params.paymentEvent.provider,
+      providerPaymentId: params.paymentEvent.providerPaymentId,
+      paymentAttemptId: params.paymentId,
+      inventoryReleased: params.inventoryReleased,
+      status: "PENDING"
+    }
+  });
+
+  latePaymentCasesTotal.inc({ provider: params.paymentEvent.provider, reason: "created" });
+
+  await emitDomainEvent({
+    type: DomainEventName.LATE_PAYMENT_CASE_CREATED,
+    correlationId: params.correlationId,
+    actorType: "webhook",
+    aggregateType: "order",
+    aggregateId: params.order.id,
+    organizerId: params.order.organizerId,
+    eventId: params.order.eventId,
+    orderId: params.order.id,
+    context: {
+      source: "webhooks.payments",
+      provider: params.paymentEvent.provider
+    },
+    payload: {
+      latePaymentCaseId: created.id,
+      paymentEventId: params.paymentEvent.id,
+      paymentAttemptId: params.paymentId,
+      providerPaymentId: params.paymentEvent.providerPaymentId,
+      inventoryReleased: params.inventoryReleased
+    }
+  }, tx);
+
+  return created;
 }
 
 export async function applyPaymentEvent(paymentEventId: string, correlationId: string): Promise<ApplyResult> {
@@ -129,6 +196,14 @@ export async function applyPaymentEvent(paymentEventId: string, correlationId: s
         }
 
         await tx.order.update({ where: { id: order.id }, data: { status: "paid_no_stock" } });
+        await ensureLatePaymentCase(tx, {
+          order,
+          paymentEvent,
+          paymentId: paymentResult.paymentId,
+          reserveId: activeReservations[0]?.id ?? null,
+          inventoryReleased: activeReservations.length > 0,
+          correlationId
+        });
         await emitDomainEvent({
           type: DomainEventName.PAYMENT_MARKED_NO_STOCK,
           correlationId,

@@ -50,12 +50,12 @@ describe.skipIf(!hasIntegrationEnv)("expiry vs payment boundary convergence", ()
       await prisma.domainEvent.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.ticketScan.deleteMany({ where: { eventId: { in: created.eventIds } } });
       await prisma.ticket.deleteMany({ where: { orderId: { in: created.orderIds } } });
+      await prisma.latePaymentCase.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.paymentEvent.deleteMany({ where: { provider, providerEventId: { in: created.providerEventIds } } });
       await prisma.payment.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.inventoryReservation.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.orderItem.deleteMany({ where: { orderId: { in: created.orderIds } } });
       await prisma.order.deleteMany({ where: { id: { in: created.orderIds } } });
-      await prisma.latePaymentCase.deleteMany({ where: { orderId: { in: created.orderIds } } });
     }
 
     if (created.ticketTypeIds.length > 0) {
@@ -192,7 +192,10 @@ describe.skipIf(!hasIntegrationEnv)("expiry vs payment boundary convergence", ()
   it("2) webhook paid llegando con reserva ya expirada => converge a paid_no_stock sin tickets ni doble stock", async () => {
     const seeded = await seedReservedOrder({ quantity: 1, remaining: 0, reservedUntilOffsetMs: -60_000 });
     const providerEventId = `evt-expired-${Date.now()}`;
+    const duplicateProviderEventId = `evt-expired-duplicate-${Date.now()}`;
+    const providerPaymentId = `pay-expired-${Date.now()}`;
     created.providerEventIds.push(providerEventId);
+    created.providerEventIds.push(duplicateProviderEventId);
 
     const response = await fetch(`${baseUrl}/webhooks/payments/${provider}`, {
       method: "POST",
@@ -200,11 +203,33 @@ describe.skipIf(!hasIntegrationEnv)("expiry vs payment boundary convergence", ()
       body: JSON.stringify({
         id: providerEventId,
         type: "payment.succeeded",
-        data: { id: `pay-expired-${Date.now()}`, metadata: { orderId: seeded.order.id } }
+        data: { id: providerPaymentId, metadata: { orderId: seeded.order.id } }
       })
     });
 
     expect(response.status).toBe(200);
+
+    const replayResponse = await fetch(`${baseUrl}/webhooks/payments/${provider}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: providerEventId,
+        type: "payment.succeeded",
+        data: { id: providerPaymentId, metadata: { orderId: seeded.order.id } }
+      })
+    });
+    expect(replayResponse.status).toBe(200);
+
+    const duplicateEnvelopeResponse = await fetch(`${baseUrl}/webhooks/payments/${provider}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: duplicateProviderEventId,
+        type: "payment.succeeded",
+        data: { id: providerPaymentId, metadata: { orderId: seeded.order.id } }
+      })
+    });
+    expect(duplicateEnvelopeResponse.status).toBe(200);
 
     const state = await getState(seeded.order.id, seeded.ticketType.id);
     expect(state.order.status).toBe("paid_no_stock");
@@ -216,8 +241,17 @@ describe.skipIf(!hasIntegrationEnv)("expiry vs payment boundary convergence", ()
     expect(state.ticketType.remaining).toBe(1);
     expect(state.paidEvents).toBe(0);
     expect(state.ticketsIssuedEvents).toBe(0);
-    expect(state.lateCases).toHaveLength(0);
-    expect(state.paymentEvents).toHaveLength(1);
+    expect(state.lateCases).toHaveLength(1);
+    expect(state.lateCases[0]).toMatchObject({
+      provider,
+      providerPaymentId,
+      status: "PENDING",
+      inventoryReleased: true,
+      paymentAttemptId: state.payments[0].id
+    });
+    const caseCreatedEvents = await prisma.domainEvent.count({ where: { orderId: seeded.order.id, type: "LATE_PAYMENT_CASE_CREATED" } });
+    expect(caseCreatedEvents).toBe(1);
+    expect(state.paymentEvents).toHaveLength(2);
     expect(state.paymentEvents[0].processedAt).toBeTruthy();
     expect(state.paymentEvents[0].ignoredReason).toBeNull();
   });

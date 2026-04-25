@@ -45,6 +45,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
 
     await prisma.ticketScan.deleteMany({ where: { eventId: { in: created.eventIds } } });
     await prisma.domainEvent.deleteMany({ where: { organizerId: { in: created.organizerIds } } });
+    await prisma.auditLog.deleteMany({ where: { organizerId: { in: created.organizerIds } } });
     await prisma.emailEvent.deleteMany({ where: { orderId: { in: created.orderIds } } });
     await prisma.latePaymentCase.deleteMany({ where: { id: { in: created.lateCaseIds } } });
     await prisma.ticket.deleteMany({ where: { id: { in: created.ticketIds } } });
@@ -414,9 +415,27 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     const ownerToken = await login(scenario.owner.email, scenario.owner.password);
     const adminToken = await login(scenario.admin.email, scenario.admin.password);
     const staffToken = await login(scenario.staff.email, scenario.staff.password);
+    const scannerToken = await login(scenario.scanner.email, scenario.scanner.password);
 
     const staffLateCases = await authFetch(`/late-payment-cases?organizerId=${scenario.organizer.id}`, staffToken);
     expect(staffLateCases.status).toBe(200);
+    const staffLateCasesBody = await staffLateCases.json() as any[];
+    expect(staffLateCasesBody[0]).toMatchObject({
+      id: scenario.lateCase.id,
+      orderId: scenario.ownerOrder.id,
+      provider: scenario.lateCase.provider,
+      providerPaymentId: scenario.lateCase.providerPaymentId,
+      status: "PENDING",
+      order: expect.objectContaining({
+        id: scenario.ownerOrder.id,
+        organizerId: scenario.organizer.id,
+        eventId: scenario.event.id
+      })
+    });
+    expect(staffLateCasesBody[0].order.customerEmail).toBeUndefined();
+
+    const scannerLateCases = await authFetch(`/late-payment-cases?organizerId=${scenario.organizer.id}`, scannerToken);
+    expect(scannerLateCases.status).toBe(403);
 
     const staffResolveLateCase = await authFetch(`/late-payment-cases/${scenario.lateCase.id}/resolve`, staffToken, {
       method: "POST",
@@ -424,11 +443,37 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
     expect(staffResolveLateCase.status).toBe(403);
 
+    const adminResolveWithoutReason = await authFetch(`/late-payment-cases/${scenario.lateCase.id}/resolve`, adminToken, {
+      method: "POST",
+      body: JSON.stringify({ action: "ACCEPT" })
+    });
+    expect(adminResolveWithoutReason.status).toBe(400);
+
     const adminResolveLateCase = await authFetch(`/late-payment-cases/${scenario.lateCase.id}/resolve`, adminToken, {
       method: "POST",
       body: JSON.stringify({ action: "ACCEPT", resolutionNotes: "admin ok" })
     });
     expect(adminResolveLateCase.status).toBe(200);
+    const adminResolvedBody = await adminResolveLateCase.json() as any;
+    expect(adminResolvedBody).toMatchObject({ status: "ACCEPTED", resolutionNotes: "admin ok", resolvedBy: scenario.admin.user.id });
+
+    const duplicateResolve = await authFetch(`/late-payment-cases/${scenario.lateCase.id}/resolve`, adminToken, {
+      method: "POST",
+      body: JSON.stringify({ action: "REJECT", resolutionNotes: "second resolution should fail" })
+    });
+    expect(duplicateResolve.status).toBe(409);
+
+    const [audit, resolvedEvents] = await Promise.all([
+      prisma.auditLog.findFirst({ where: { entityType: "LatePaymentCase", entityId: scenario.lateCase.id, action: "late_payment_case.resolve" } }),
+      prisma.domainEvent.count({ where: { orderId: scenario.ownerOrder.id, type: "LATE_PAYMENT_CASE_RESOLVED" } })
+    ]);
+    expect(audit).toBeTruthy();
+    expect(audit?.metadata).toMatchObject({
+      orderId: scenario.ownerOrder.id,
+      previous: { status: "PENDING" },
+      next: { status: "ACCEPTED", resolutionNotes: "admin ok", resolvedBy: scenario.admin.user.id }
+    });
+    expect(resolvedEvents).toBe(1);
 
     const secondLateCase = await prisma.latePaymentCase.create({
       data: {

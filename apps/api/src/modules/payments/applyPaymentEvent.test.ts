@@ -19,6 +19,10 @@ const tx: any = {
     findUnique: vi.fn(),
     create: vi.fn()
   },
+  latePaymentCase: {
+    findUnique: vi.fn(),
+    create: vi.fn()
+  },
   orderItem: { aggregate: vi.fn() },
   inventoryReservation: { aggregate: vi.fn(), updateMany: vi.fn() },
   ticketType: { findUniqueOrThrow: vi.fn() },
@@ -39,6 +43,8 @@ describe("applyPaymentEvent", () => {
     vi.clearAllMocks();
     tx.payment.findUnique.mockResolvedValue(null);
     tx.payment.create.mockImplementation(async ({ data }: any) => ({ id: `p-${data.providerRef}`, ...data }));
+    tx.latePaymentCase.findUnique.mockResolvedValue(null);
+    tx.latePaymentCase.create.mockImplementation(async ({ data }: any) => ({ id: `lpc-${data.providerPaymentId}`, ...data }));
   });
 
   it("returns no-op when event already processed", async () => {
@@ -176,6 +182,19 @@ describe("applyPaymentEvent", () => {
 
     expect(result.outcome).toBe("paid_no_stock");
     expect(tx.order.update).toHaveBeenCalledWith({ where: { id: "o5" }, data: { status: "paid_no_stock" } });
+    expect(tx.latePaymentCase.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        orderId: "o5",
+        provider: "mock",
+        providerPaymentId: "p5",
+        paymentAttemptId: "p-p5",
+        status: "PENDING"
+      })
+    });
+    expect(emitDomainEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "LATE_PAYMENT_CASE_CREATED",
+      payload: expect.objectContaining({ providerPaymentId: "p5" })
+    }), tx);
   });
 
   it("is idempotent when same event is processed twice", async () => {
