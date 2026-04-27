@@ -151,6 +151,13 @@ curl -X POST http://localhost:3000/checkout/reserve \
     - `PENDING -> ACCEPT | REJECT | REFUND_REQUESTED | REFUNDED`
     - `REFUND_REQUESTED -> REFUNDED`
     - terminales -> sin acción
+- `GET /orders/:orderId/case-view`
+  - auth requerido
+  - capability real: `viewOrderCase`
+  - contrato read-only para backoffice/soporte
+  - devuelve secciones separadas: `orderSummary`, `eventSummary`, `buyerSummary`, `itemSummary`, `paymentSummary`, `ticketSummary`, `reservationSummary`, `latePaymentCaseSummary`, `operationalTimeline`, `auditSummary`
+  - minimiza PII: email enmascarado, refs PSP enmascaradas, sin payload raw de PSP, sin QR/códigos completos, sin metadata raw de auditoría
+  - doc operativo: `docs/ops/order-case-view.md`
 - `POST /orders/:id/resend-confirmation`
 
 ## Trust boundary de payments webhook
