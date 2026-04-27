@@ -16,6 +16,7 @@ export type AdminCapability =
   | "viewLatePaymentCases"
   | "resolveLatePayments"
   | "viewOrderCase"
+  | "sensitiveOrderLookup"
   | "resendOrderConfirmation";
 
 export type ScopeLevel = "organizer" | "event";
@@ -38,6 +39,7 @@ const CAPABILITY_ORDER: AdminCapability[] = [
   "viewLatePaymentCases",
   "resolveLatePayments",
   "viewOrderCase",
+  "sensitiveOrderLookup",
   "resendOrderConfirmation"
 ];
 
@@ -55,6 +57,7 @@ const roleCapabilities: Record<OrganizerRole, AdminCapability[]> = {
     "viewLatePaymentCases",
     "resolveLatePayments",
     "viewOrderCase",
+    "sensitiveOrderLookup",
     "resendOrderConfirmation"
   ],
   staff: [
