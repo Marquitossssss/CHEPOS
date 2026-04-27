@@ -199,6 +199,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       createEvent: true,
       manageTicketTypes: true,
       resolveLatePayments: true,
+      viewOrderCase: true,
       viewEventActivity: true,
       scanTickets: true
     });
@@ -213,6 +214,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       createEvent: true,
       manageTicketTypes: true,
       resolveLatePayments: true,
+      viewOrderCase: true,
       viewEventActivity: true,
       scanTickets: true
     });
@@ -228,6 +230,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageTicketTypes: false,
       resolveLatePayments: false,
       viewLatePaymentCases: true,
+      viewOrderCase: true,
       resendOrderConfirmation: true,
       viewEventDashboard: true,
       viewEventActivity: true,
@@ -245,6 +248,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageTicketTypes: false,
       resolveLatePayments: false,
       viewLatePaymentCases: false,
+      viewOrderCase: false,
       resendOrderConfirmation: false,
       viewEventActivity: false,
       scanTickets: true
@@ -272,6 +276,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     expect(staffContextJson.capabilities.viewEventDashboard).toBe(true);
     expect(staffContextJson.capabilities.viewLatePaymentCases).toBe(true);
     expect(staffContextJson.capabilities.resolveLatePayments).toBe(false);
+    expect(staffContextJson.capabilities.viewOrderCase).toBe(true);
     expect(staffContextJson.capabilities.resendOrderConfirmation).toBe(true);
   });
 

@@ -192,6 +192,30 @@ async function syncLatePaymentPendingGauge(provider?: string) {
   }
 }
 
+function maskEmail(email: string) {
+  const [local = "", domain = ""] = email.split("@");
+  if (!domain) return "***";
+  const visibleLocal = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2);
+  return `${visibleLocal}${"*".repeat(Math.max(3, local.length - visibleLocal.length))}@${domain}`;
+}
+
+function maskReference(ref: string | null | undefined) {
+  if (!ref) return null;
+  if (ref.length <= 8) return `${ref.slice(0, 2)}***`;
+  return `${ref.slice(0, 4)}***${ref.slice(-4)}`;
+}
+
+function countBy<T extends string>(values: T[]) {
+  return values.reduce<Record<string, number>>((acc, value) => {
+    acc[value] = (acc[value] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function jsonObject(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
 async function validateTicketRecord(db: TicketDbLike, code: string): Promise<TicketValidation> {
   if (!verifyTicketCode(code)) return { valid: false, reason: "Firma invÃ¡lida" };
   const ticket = await db.ticket.findUnique({
@@ -1190,6 +1214,229 @@ app.post<{ Params: { id: string } }>("/orders/:id/resend-confirmation", { preHan
   );
 
   return { ok: true };
+});
+
+app.get<{ Params: { orderId: string } }>("/orders/:orderId/case-view", { preHandler: verifyAuth }, async (req) => {
+  const user = req.user as JwtPayload;
+  const params = z.object({ orderId: z.string().uuid() }).parse(req.params);
+
+  const order = await prisma.order.findUnique({
+    where: { id: params.orderId },
+    include: {
+      event: {
+        select: {
+          id: true,
+          organizerId: true,
+          name: true,
+          venue: true,
+          startsAt: true,
+          endsAt: true,
+          timezone: true
+        }
+      },
+      items: {
+        include: {
+          ticketType: { select: { id: true, name: true, currency: true } }
+        },
+        orderBy: { id: "asc" }
+      },
+      payments: {
+        select: { id: true, provider: true, providerRef: true, status: true, amountCents: true, createdAt: true },
+        orderBy: { createdAt: "asc" }
+      },
+      paymentEvents: {
+        select: {
+          id: true,
+          provider: true,
+          providerEventId: true,
+          providerPaymentId: true,
+          eventType: true,
+          receivedAt: true,
+          processedAt: true,
+          ignoredReason: true,
+          processError: true
+        },
+        orderBy: { receivedAt: "asc" }
+      },
+      tickets: {
+        select: { id: true, status: true, issuedAt: true, checkedInAt: true },
+        orderBy: { issuedAt: "asc" }
+      },
+      reservations: {
+        select: { id: true, ticketTypeId: true, quantity: true, expiresAt: true, releasedAt: true, releaseReason: true },
+        orderBy: { createdAt: "asc" }
+      },
+      latePaymentCases: {
+        select: {
+          id: true,
+          provider: true,
+          providerPaymentId: true,
+          paymentAttemptId: true,
+          inventoryReleased: true,
+          status: true,
+          detectedAt: true,
+          resolutionNotes: true,
+          resolvedAt: true,
+          resolvedBy: true,
+          version: true
+        },
+        orderBy: { detectedAt: "desc" }
+      }
+    }
+  });
+
+  if (!order) throw app.httpErrors.notFound("Orden no encontrada");
+
+  await requireOrganizerCapability(app, user.userId, order.organizerId, "viewOrderCase");
+
+  const [domainEvents, auditLogs] = await Promise.all([
+    prisma.domainEvent.findMany({
+      where: { orderId: order.id },
+      select: { id: true, type: true, occurredAt: true, actorType: true, actorId: true, correlationId: true, context: true },
+      orderBy: { occurredAt: "asc" },
+      take: 100
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        organizerId: order.organizerId,
+        OR: [
+          { entityType: "Order", entityId: order.id },
+          ...(order.latePaymentCases.length > 0
+            ? [{ entityType: "LatePaymentCase", entityId: { in: order.latePaymentCases.map((lateCase) => lateCase.id) } }]
+            : [])
+        ]
+      },
+      select: { id: true, action: true, entityType: true, entityId: true, actorUserId: true, metadata: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+      take: 100
+    })
+  ]);
+
+  const firstCurrency = order.items[0]?.ticketType.currency ?? null;
+  const ticketStatuses = countBy(order.tickets.map((ticket) => ticket.status));
+  const reservationStatuses = countBy(order.reservations.map((reservation) => reservation.releasedAt ? "released" : "active"));
+
+  return {
+    orderSummary: {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      reservedUntil: order.reservedUntil,
+      totalCents: order.totalCents,
+      currency: firstCurrency,
+      eventId: order.eventId,
+      organizerId: order.organizerId,
+      latePaymentReviewRequired: order.latePaymentReviewRequired
+    },
+    eventSummary: {
+      eventId: order.event.id,
+      organizerId: order.event.organizerId,
+      name: order.event.name,
+      venue: order.event.venue,
+      startsAt: order.event.startsAt,
+      endsAt: order.event.endsAt,
+      timezone: order.event.timezone
+    },
+    buyerSummary: {
+      emailMasked: maskEmail(order.customerEmail)
+    },
+    itemSummary: order.items.map((item) => ({
+      ticketTypeId: item.ticketTypeId,
+      ticketTypeName: item.ticketType.name,
+      quantity: item.quantity,
+      unitPriceCents: item.unitPriceCents,
+      subtotalCents: item.totalCents,
+      currency: item.ticketType.currency
+    })),
+    paymentSummary: {
+      payments: order.payments.map((payment) => ({
+        id: payment.id,
+        provider: payment.provider,
+        providerRefMasked: maskReference(payment.providerRef),
+        status: payment.status,
+        amountCents: payment.amountCents,
+        createdAt: payment.createdAt
+      })),
+      events: order.paymentEvents.map((event) => ({
+        id: event.id,
+        provider: event.provider,
+        providerEventIdMasked: maskReference(event.providerEventId),
+        providerPaymentIdMasked: maskReference(event.providerPaymentId),
+        eventType: event.eventType,
+        receivedAt: event.receivedAt,
+        processedAt: event.processedAt,
+        ignoredReason: event.ignoredReason,
+        hasProcessError: Boolean(event.processError)
+      }))
+    },
+    ticketSummary: {
+      count: order.tickets.length,
+      statuses: ticketStatuses,
+      issuedAt: order.tickets.map((ticket) => ticket.issuedAt),
+      tickets: order.tickets.map((ticket) => ({
+        id: ticket.id,
+        status: ticket.status,
+        issuedAt: ticket.issuedAt,
+        checkedInAt: ticket.checkedInAt
+      }))
+    },
+    reservationSummary: {
+      count: order.reservations.length,
+      statuses: reservationStatuses,
+      reservations: order.reservations.map((reservation) => ({
+        id: reservation.id,
+        ticketTypeId: reservation.ticketTypeId,
+        quantity: reservation.quantity,
+        status: reservation.releasedAt ? "released" : "active",
+        expiresAt: reservation.expiresAt,
+        releasedAt: reservation.releasedAt,
+        releaseReason: reservation.releaseReason
+      }))
+    },
+    latePaymentCaseSummary: order.latePaymentCases.map((lateCase) => ({
+      id: lateCase.id,
+      status: lateCase.status,
+      provider: lateCase.provider,
+      providerPaymentIdMasked: maskReference(lateCase.providerPaymentId),
+      paymentAttemptId: lateCase.paymentAttemptId,
+      inventoryReleased: lateCase.inventoryReleased,
+      detectedAt: lateCase.detectedAt,
+      resolutionNotes: lateCase.resolutionNotes,
+      resolvedAt: lateCase.resolvedAt,
+      resolvedBy: lateCase.resolvedBy,
+      version: lateCase.version
+    })),
+    operationalTimeline: domainEvents.map((event) => {
+      const context = jsonObject(event.context);
+      return {
+        id: event.id,
+        type: event.type,
+        occurredAt: event.occurredAt,
+        actorType: event.actorType,
+        actorId: event.actorId,
+        correlationId: event.correlationId,
+        source: typeof context.source === "string" ? context.source : null
+      };
+    }),
+    auditSummary: auditLogs.map((audit) => {
+      const metadata = jsonObject(audit.metadata);
+      const previous = jsonObject(metadata.previous);
+      const next = jsonObject(metadata.next);
+      return {
+        id: audit.id,
+        action: audit.action,
+        entityType: audit.entityType,
+        entityId: audit.entityId,
+        actorUserId: audit.actorUserId,
+        createdAt: audit.createdAt,
+        previousStatus: typeof previous.status === "string" ? previous.status : null,
+        nextStatus: typeof next.status === "string" ? next.status : null,
+        resolutionNotes: typeof next.resolutionNotes === "string" ? next.resolutionNotes : null
+      };
+    })
+  };
 });
 
 app.get("/late-payment-cases", { preHandler: verifyAuth }, async (req: any) => {
