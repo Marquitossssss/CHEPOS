@@ -158,6 +158,17 @@ curl -X POST http://localhost:3000/checkout/reserve \
   - devuelve secciones separadas: `orderSummary`, `eventSummary`, `buyerSummary`, `itemSummary`, `paymentSummary`, `ticketSummary`, `reservationSummary`, `latePaymentCaseSummary`, `operationalTimeline`, `auditSummary`
   - minimiza PII: email enmascarado, refs PSP enmascaradas, sin payload raw de PSP, sin QR/códigos completos, sin metadata raw de auditoría
   - doc operativo: `docs/ops/order-case-view.md`
+- `POST /orders/sensitive-lookup`
+  - auth requerido
+  - capability real dedicada: `sensitiveOrderLookup` (`viewOrderCase` no alcanza para buscar por dato sensible)
+  - request: `queryType` (`email | orderId | paymentReference`), `query`, `organizerId`, `eventId?`, `reason`
+  - `reason` es obligatorio, trimmeado, mínimo 12 caracteres, y queda auditado
+  - scope: `organizerId` obligatorio; si se envía `eventId`, debe pertenecer al organizer; capability sin scope válido => 403
+  - respuesta mínima: `results[]` con `orderId`, `eventId`, `eventTitle`, `orderStatus`, `paymentStatus`, `latePaymentCaseStatus`, `buyerDisplay` enmascarado, `createdAt`, `caseViewAvailable`, y `meta.limited`
+  - seguridad: no devuelve customerEmail completo, providerRef completo, ticket code, qrPayload, payload raw de payments/webhooks, metadata raw de auditoría ni datos de otros organizers
+  - auditoría: crea `AuditLog` `action=sensitive_order_lookup` con actor, organizer, event opcional, queryType, fingerprint SHA-256 de la query normalizada, reason y bucket/conteo limitado
+  - revelación operativa ampliada: primero lookup mínimo; luego `GET /orders/:orderId/case-view` con `viewOrderCase`
+  - DNI/documento: UNVERIFIED/deferred; el schema actual no tiene campo de DNI/documento y no se inventó columna ni migración
 - `POST /orders/:id/resend-confirmation`
 
 ## Trust boundary de payments webhook

@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import sensible from "@fastify/sensible";
 import bcrypt from "bcryptjs";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { Counter, Gauge, Histogram, collectDefaultMetrics, register } from "prom-client";
@@ -214,6 +215,22 @@ function countBy<T extends string>(values: T[]) {
 
 function jsonObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function normalizeSensitiveLookupQuery(queryType: "email" | "orderId" | "paymentReference", query: string) {
+  const trimmed = query.trim();
+  if (queryType === "email") return trimmed.toLowerCase();
+  return trimmed;
+}
+
+function fingerprintSensitiveLookupQuery(queryType: string, normalizedQuery: string) {
+  return createHash("sha256").update(`${queryType}:${normalizedQuery}`).digest("hex");
+}
+
+function resultCountBucket(count: number) {
+  if (count === 0) return "0";
+  if (count === 1) return "1";
+  return "2+";
 }
 
 async function validateTicketRecord(db: TicketDbLike, code: string): Promise<TicketValidation> {
@@ -1214,6 +1231,128 @@ app.post<{ Params: { id: string } }>("/orders/:id/resend-confirmation", { preHan
   );
 
   return { ok: true };
+});
+
+
+app.post("/orders/sensitive-lookup", { preHandler: verifyAuth }, async (req: any) => {
+  const user = req.user as JwtPayload;
+  const body = z
+    .object({
+      queryType: z.enum(["email", "orderId", "paymentReference"]),
+      query: z.string().trim().min(1),
+      organizerId: z.string().uuid(),
+      eventId: z.string().uuid().optional(),
+      reason: z.string().trim().min(12).max(2000)
+    })
+    .superRefine((value, ctx) => {
+      const normalized = normalizeSensitiveLookupQuery(value.queryType, value.query);
+      if (value.queryType === "email") {
+        const emailCheck = z.string().email().safeParse(normalized);
+        if (!emailCheck.success || normalized.length < 6) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["query"], message: "email query inválida" });
+        }
+      }
+      if (value.queryType === "orderId") {
+        const uuidCheck = z.string().uuid().safeParse(normalized);
+        if (!uuidCheck.success) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["query"], message: "orderId query inválida" });
+        }
+      }
+      if (value.queryType === "paymentReference" && normalized.length < 8) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["query"], message: "paymentReference query demasiado corta" });
+      }
+    })
+    .parse(req.body ?? {});
+
+  if (body.eventId) {
+    const scopedEvent = await prisma.event.findFirst({ where: { id: body.eventId, organizerId: body.organizerId }, select: { id: true } });
+    if (!scopedEvent) throw app.httpErrors.forbidden("Sin permisos para este organizador");
+    await requireEventCapability(app, user.userId, body.eventId, "sensitiveOrderLookup");
+  } else {
+    await requireOrganizerCapability(app, user.userId, body.organizerId, "sensitiveOrderLookup");
+  }
+
+  const normalizedQuery = normalizeSensitiveLookupQuery(body.queryType, body.query);
+  const take = 11;
+  const baseWhere = {
+    organizerId: body.organizerId,
+    ...(body.eventId ? { eventId: body.eventId } : {})
+  };
+
+  const queryWhere = body.queryType === "email"
+    ? { customerEmail: { equals: normalizedQuery, mode: "insensitive" as const } }
+    : body.queryType === "orderId"
+      ? { id: normalizedQuery }
+      : { payments: { some: { providerRef: normalizedQuery } } };
+
+  const orders = await prisma.order.findMany({
+    where: { ...baseWhere, ...queryWhere },
+    select: {
+      id: true,
+      eventId: true,
+      status: true,
+      customerEmail: true,
+      createdAt: true,
+      event: { select: { id: true, name: true, organizerId: true } },
+      payments: { select: { status: true }, orderBy: { createdAt: "desc" }, take: 1 },
+      latePaymentCases: { select: { status: true }, orderBy: { detectedAt: "desc" }, take: 1 }
+    },
+    orderBy: { createdAt: "desc" },
+    take
+  });
+
+  const limited = orders.length === take;
+  const visibleOrders = limited ? orders.slice(0, take - 1) : orders;
+
+  const audit = await prisma.auditLog.create({
+    data: {
+      organizerId: body.organizerId,
+      actorUserId: user.userId,
+      action: "sensitive_order_lookup",
+      entityType: "SensitiveOrderLookup",
+      entityId: body.organizerId,
+      metadata: {
+        correlationId: req.correlationId,
+        eventId: body.eventId ?? null,
+        queryType: body.queryType,
+        queryFingerprint: fingerprintSensitiveLookupQuery(body.queryType, normalizedQuery),
+        reason: body.reason,
+        resultCount: visibleOrders.length,
+        resultCountBucket: resultCountBucket(visibleOrders.length),
+        limited
+      }
+    }
+  });
+
+  req.log.info({
+    correlationId: req.correlationId,
+    auditLogId: audit.id,
+    actorId: user.userId,
+    organizerId: body.organizerId,
+    eventId: body.eventId ?? null,
+    queryType: body.queryType,
+    resultCountBucket: resultCountBucket(visibleOrders.length),
+    limited
+  }, "sensitive order lookup executed");
+
+  return {
+    results: visibleOrders.map((order) => ({
+      orderId: order.id,
+      eventId: order.eventId,
+      eventTitle: order.event.name,
+      orderStatus: order.status,
+      paymentStatus: order.payments[0]?.status ?? null,
+      latePaymentCaseStatus: order.latePaymentCases[0]?.status ?? null,
+      buyerDisplay: {
+        name: null,
+        emailMasked: maskEmail(order.customerEmail),
+        documentMasked: null
+      },
+      createdAt: order.createdAt,
+      caseViewAvailable: true
+    })),
+    meta: { limited }
+  };
 });
 
 app.get<{ Params: { orderId: string } }>("/orders/:orderId/case-view", { preHandler: verifyAuth }, async (req) => {
