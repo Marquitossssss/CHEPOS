@@ -141,6 +141,7 @@ describe.skipIf(!hasIntegrationEnv)("sensitive order lookup contract", () => {
     });
     created.ticketTypeIds.push(ticketType.id);
 
+    const owner = await createUser("owner", organizer.id);
     const admin = await createUser("admin", organizer.id);
     const staff = await createUser("staff", organizer.id);
     const scanner = await createUser("scanner", organizer.id);
@@ -210,11 +211,12 @@ describe.skipIf(!hasIntegrationEnv)("sensitive order lookup contract", () => {
     });
     created.lateCaseIds.push(lateCase.id);
 
-    return { organizer, otherOrganizer, event, otherEvent, admin, staff, scanner, otherStaff, orders, customerEmail, providerRef, ticketCode, qrPayload };
+    return { organizer, otherOrganizer, event, otherEvent, owner, admin, staff, scanner, otherStaff, orders, customerEmail, providerRef, ticketCode, qrPayload };
   }
 
   it("enforces dedicated capability, scope, minimization, limits and audit", async () => {
     const scenario = await seedScenario();
+    const ownerToken = await login(scenario.owner.email, scenario.owner.password);
     const adminToken = await login(scenario.admin.email, scenario.admin.password);
     const staffToken = await login(scenario.staff.email, scenario.staff.password);
     const scannerToken = await login(scenario.scanner.email, scenario.scanner.password);
@@ -248,6 +250,9 @@ describe.skipIf(!hasIntegrationEnv)("sensitive order lookup contract", () => {
 
     const unsupportedDni = await lookup(adminToken, { ...validBody, queryType: "dni", query: "12345678" });
     expect(unsupportedDni.status).toBe(400);
+
+    const ownerResponse = await lookup(ownerToken, { ...validBody, reason: "owner valida lookup sensible" });
+    expect(ownerResponse.status).toBe(200);
 
     const response = await lookup(adminToken, validBody);
     expect(response.status).toBe(200);
