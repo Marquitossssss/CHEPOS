@@ -344,12 +344,20 @@ describe.skipIf(!hasIntegrationEnv)("order confirmation resend contract", () => 
     const lateCaseBefore = await prisma.latePaymentCase.findMany({ where: { orderId: scenario.paidEligible.order.id }, orderBy: { createdAt: "asc" } });
     const ticketCountBefore = await prisma.ticket.count({ where: { orderId: scenario.paidEligible.order.id } });
 
-    const ownerEligible = await resend(ownerToken, scenario.paidEligible.order.id, { ...validBody, reason: "owner solicita reenvio por soporte externo" });
+    const ownerReason = "owner solicita reenvio por soporte externo";
+    const adminReason = "admin reenvia comprobante ya enviado antes";
+
+    const ownerEligible = await resend(ownerToken, scenario.paidEligible.order.id, { ...validBody, reason: ownerReason });
     expect(ownerEligible.status).toBe(200);
     const ownerBody = await ownerEligible.json() as any;
-    expect(ownerBody.status).toBe("queued");
+    expect(ownerBody).toMatchObject({
+      orderId: scenario.paidEligible.order.id,
+      status: "queued",
+      auditId: expect.any(String),
+      emailMasked: expect.stringContaining("@")
+    });
 
-    const adminEligible = await resend(adminToken, scenario.paidAlreadySent.order.id, { ...validBody, reason: "admin reenvia comprobante ya enviado antes" });
+    const adminEligible = await resend(adminToken, scenario.paidAlreadySent.order.id, { ...validBody, reason: adminReason });
     expect(adminEligible.status).toBe(200);
     const adminBody = await adminEligible.json() as any;
     expect(adminBody).toMatchObject({
@@ -359,7 +367,7 @@ describe.skipIf(!hasIntegrationEnv)("order confirmation resend contract", () => 
       emailMasked: expect.stringContaining("@")
     });
 
-    const serialized = JSON.stringify(adminBody);
+    const serialized = JSON.stringify({ ownerBody, adminBody });
     expect(serialized).not.toContain("provider-secret-");
     expect(serialized).not.toContain("qr-");
     expect(serialized).not.toContain("secret-ticket-code");
@@ -376,29 +384,62 @@ describe.skipIf(!hasIntegrationEnv)("order confirmation resend contract", () => 
     expect(JSON.stringify(lateCaseAfter)).toBe(JSON.stringify(lateCaseBefore));
 
     const auditRows = await prisma.auditLog.findMany({
-      where: { entityId: scenario.paidAlreadySent.order.id, action: "order_confirmation_resend_requested" },
-      orderBy: { createdAt: "desc" },
-      take: 1
+      where: {
+        action: "order_confirmation_resend_requested",
+        entityId: { in: [scenario.paidEligible.order.id, scenario.paidAlreadySent.order.id] }
+      },
+      orderBy: [{ entityId: "asc" }, { createdAt: "desc" }]
     });
-    expect(auditRows).toHaveLength(1);
+    expect(auditRows).toHaveLength(2);
     created.auditLogIds.push(...auditRows.map((row) => row.id));
-    expect(auditRows[0]?.metadata).toMatchObject({
-      reason: "admin reenvia comprobante ya enviado antes",
+
+    const ownerAudit = auditRows.find((row) => row.entityId === scenario.paidEligible.order.id);
+    const adminAudit = auditRows.find((row) => row.entityId === scenario.paidAlreadySent.order.id);
+
+    expect(ownerAudit?.metadata).toMatchObject({
+      reason: ownerReason,
+      emailMasked: ownerBody.emailMasked,
+      correlationId: expect.any(String),
+      queueJobId: expect.stringContaining("order_confirmation_resend:")
+    });
+    expect(adminAudit?.metadata).toMatchObject({
+      reason: adminReason,
       emailMasked: adminBody.emailMasked,
       correlationId: expect.any(String),
       queueJobId: expect.stringContaining("order_confirmation_resend:")
     });
-    expect(JSON.stringify(auditRows[0]?.metadata ?? {})).not.toContain("buyer-");
+
+    const serializedAudit = JSON.stringify([ownerAudit?.metadata ?? {}, adminAudit?.metadata ?? {}]);
+    expect(serializedAudit).not.toContain("buyer-");
+    expect(serializedAudit).not.toContain("provider-secret-");
+    expect(serializedAudit).not.toContain("qr-");
+    expect(serializedAudit).not.toContain("secret-ticket-code");
 
     const notificationQueue = await getNotificationQueue();
-    const jobs = await notificationQueue.getJobs(["waiting", "delayed", "prioritized"], 0, 50);
-    const resendJobs = jobs.filter((job) => job.name === "order_confirmation_resend");
-    expect(resendJobs.length).toBeGreaterThanOrEqual(2);
-    const matchingJob = resendJobs.find((job) => job.data?.orderId === scenario.paidAlreadySent.order.id);
-    expect(matchingJob?.data).toMatchObject({
-      type: "order_confirmation_resend",
-      orderId: scenario.paidAlreadySent.order.id,
-      meta: { actorUserId: scenario.admin.user.id }
-    });
+    for (const expected of [
+      {
+        audit: ownerAudit,
+        orderId: scenario.paidEligible.order.id,
+        actorUserId: scenario.owner.user.id
+      },
+      {
+        audit: adminAudit,
+        orderId: scenario.paidAlreadySent.order.id,
+        actorUserId: scenario.admin.user.id
+      }
+    ]) {
+      const queueJobId = String((expected.audit?.metadata as any)?.queueJobId ?? "");
+      expect(queueJobId).toContain("order_confirmation_resend:");
+
+      const job = queueJobId ? await notificationQueue.getJob(queueJobId) : null;
+      if (job) {
+        expect(job.name).toBe("order_confirmation_resend");
+        expect(job.data).toMatchObject({
+          type: "order_confirmation_resend",
+          orderId: expected.orderId,
+          meta: { actorUserId: expected.actorUserId }
+        });
+      }
+    }
   });
 });
