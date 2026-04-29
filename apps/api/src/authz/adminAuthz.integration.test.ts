@@ -1,15 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import bcrypt from "bcryptjs";
-import { prisma } from "../lib/prisma.js";
-import { generateTicketCode } from "../lib/qr.js";
-import { hasIntegrationEnv } from "../modules/payments/integrationTestEnv.js";
-import { getOrganizerRoleCapabilities, type OrganizerRole } from "@articket/shared";
-
 process.env.API_PORT = process.env.API_PORT ?? "3000";
 process.env.JWT_ACCESS_SECRET ||= "test-access-secret-min-24-ch";
 process.env.JWT_REFRESH_SECRET ||= "test-refresh-secret-24-ch";
 process.env.QR_SECRET ||= "test-qr-secret-min-24-ch";
 process.env.NODE_ENV ||= "test";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import bcrypt from "bcryptjs";
+import { prisma } from "../lib/prisma.js";
+import { hasIntegrationEnv } from "../modules/payments/integrationTestEnv.js";
+import { getOrganizerRoleCapabilities, type OrganizerRole } from "@articket/shared";
 
 const baseUrl = `http://127.0.0.1:${process.env.API_PORT}`;
 
@@ -163,6 +162,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
     created.orderIds.push(ownerOrder.id);
 
+    const { generateTicketCode } = await import("../lib/qr.js");
     const ticket = await prisma.ticket.create({
       data: {
         orderId: ownerOrder.id,
@@ -234,7 +234,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       viewLatePaymentCases: true,
       viewOrderCase: true,
       sensitiveOrderLookup: false,
-      resendOrderConfirmation: true,
+      resendOrderConfirmation: false,
       viewEventDashboard: true,
       viewEventActivity: true,
       scanTickets: true
@@ -282,7 +282,7 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     expect(staffContextJson.capabilities.resolveLatePayments).toBe(false);
     expect(staffContextJson.capabilities.viewOrderCase).toBe(true);
     expect(staffContextJson.capabilities.sensitiveOrderLookup).toBe(false);
-    expect(staffContextJson.capabilities.resendOrderConfirmation).toBe(true);
+    expect(staffContextJson.capabilities.resendOrderConfirmation).toBe(false);
   });
 
   it("/authz/context rejects eventId that does not belong to organizerId", async () => {
@@ -502,21 +502,35 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     expect(ownerResolveLateCase.status).toBe(200);
   });
 
-  it("enforces resend confirmation: scanner denied, staff allowed", async () => {
+  it("enforces resend confirmation capability: owner/admin allowed, staff/scanner denied", async () => {
     const scenario = await seedScenario();
+    const ownerToken = await login(scenario.owner.email, scenario.owner.password);
+    const adminToken = await login(scenario.admin.email, scenario.admin.password);
     const scannerToken = await login(scenario.scanner.email, scenario.scanner.password);
     const staffToken = await login(scenario.staff.email, scenario.staff.password);
 
+    const ownerResend = await authFetch(`/orders/${scenario.ownerOrder.id}/resend-confirmation`, ownerToken, {
+      method: "POST",
+      body: JSON.stringify({ organizerId: scenario.organizer.id, reason: "owner solicita reenvio manual" })
+    });
+    expect(ownerResend.status).toBe(200);
+
+    const adminResend = await authFetch(`/orders/${scenario.ownerOrder.id}/resend-confirmation`, adminToken, {
+      method: "POST",
+      body: JSON.stringify({ organizerId: scenario.organizer.id, reason: "admin solicita reenvio manual" })
+    });
+    expect(adminResend.status).toBe(200);
+
     const scannerResend = await authFetch(`/orders/${scenario.ownerOrder.id}/resend-confirmation`, scannerToken, {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify({ organizerId: scenario.organizer.id, reason: "scanner intenta reenvio manual" })
     });
     expect(scannerResend.status).toBe(403);
 
     const staffResend = await authFetch(`/orders/${scenario.ownerOrder.id}/resend-confirmation`, staffToken, {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify({ organizerId: scenario.organizer.id, reason: "staff intenta reenvio manual" })
     });
-    expect(staffResend.status).toBe(200);
+    expect(staffResend.status).toBe(403);
   });
 });

@@ -1220,17 +1220,87 @@ app.post("/checkin/scan", { preHandler: verifyAuth }, async (req: any) => {
 
 app.post<{ Params: { id: string } }>("/orders/:id/resend-confirmation", { preHandler: verifyAuth }, async (req) => {
   const user = req.user as JwtPayload;
-  const correlationId = req.correlationId;
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: req.params.id }, include: { event: true } });
-  await requireMembership(user.userId, order.organizerId, ["owner", "admin", "staff"]);
+  const body = z.object({
+    organizerId: z.string().uuid(),
+    reason: z.string().trim().min(12).max(2000)
+  }).parse(req.body ?? {});
+
+  await requireOrganizerCapability(app, user.userId, body.organizerId, "resendOrderConfirmation");
+
+  const order = await prisma.order.findFirst({
+    where: { id: req.params.id, organizerId: body.organizerId },
+    select: {
+      id: true,
+      organizerId: true,
+      eventId: true,
+      status: true,
+      customerEmail: true,
+      tickets: { select: { id: true } }
+    }
+  });
+
+  if (!order) {
+    throw app.httpErrors.notFound("Orden no encontrada");
+  }
+
+  if (order.status !== "paid") {
+    throw app.httpErrors.conflict("Orden no elegible para reenviar confirmación");
+  }
+
+  if (order.tickets.length === 0) {
+    throw app.httpErrors.conflict("Orden no elegible para reenviar confirmación");
+  }
+
+  const normalizedEmail = order.customerEmail.trim();
+  if (!z.string().email().safeParse(normalizedEmail).success) {
+    throw app.httpErrors.conflict("Orden no elegible para reenviar confirmación");
+  }
+
+  const jobId = `order_confirmation_resend:${order.id}:${Date.now()}:${nanoid(6)}`;
 
   await notificationQueue.add(
-    "order_paid_confirmation",
-    { type: "order_paid_confirmation", orderId: order.id, meta: { correlationId } },
-    { jobId: `order_paid_confirmation:${order.id}:manual:${Date.now()}` }
+    "order_confirmation_resend",
+    {
+      type: "order_confirmation_resend",
+      orderId: order.id,
+      meta: { correlationId: req.correlationId, actorUserId: user.userId }
+    },
+    { jobId }
   );
 
-  return { ok: true };
+  const audit = await prisma.auditLog.create({
+    data: {
+      organizerId: order.organizerId,
+      actorUserId: user.userId,
+      action: "order_confirmation_resend_requested",
+      entityType: "Order",
+      entityId: order.id,
+      metadata: {
+        correlationId: req.correlationId,
+        eventId: order.eventId,
+        reason: body.reason,
+        queueJobId: jobId,
+        emailMasked: maskEmail(normalizedEmail)
+      }
+    }
+  });
+
+  req.log.info({
+    correlationId: req.correlationId,
+    auditLogId: audit.id,
+    organizerId: order.organizerId,
+    eventId: order.eventId,
+    orderId: order.id,
+    queueJobId: jobId,
+    actorUserId: user.userId
+  }, "order confirmation resend requested");
+
+  return {
+    orderId: order.id,
+    status: "queued" as const,
+    emailMasked: maskEmail(normalizedEmail),
+    auditId: audit.id
+  };
 });
 
 

@@ -21,3 +21,15 @@ export type OrderPaidJob = {
     correlationId?: string;
   };
 };
+
+export type OrderConfirmationResendJob = {
+  type: "order_confirmation_resend";
+  orderId: string;
+  meta?: {
+    correlationId?: string;
+    actorUserId?: string;
+    auditLogId?: string;
+  };
+};
+
+export type NotificationJob = OrderPaidJob | OrderConfirmationResendJob;
