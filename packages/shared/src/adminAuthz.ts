@@ -66,8 +66,7 @@ const roleCapabilities: Record<OrganizerRole, AdminCapability[]> = {
     "scanTickets",
     "viewEventActivity",
     "viewLatePaymentCases",
-    "viewOrderCase",
-    "resendOrderConfirmation"
+    "viewOrderCase"
   ],
   scanner: ["viewEventDashboard", "operateEvent", "scanTickets"]
 };

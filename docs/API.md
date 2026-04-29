@@ -170,6 +170,21 @@ curl -X POST http://localhost:3000/checkout/reserve \
   - revelación operativa ampliada: primero lookup mínimo; luego `GET /orders/:orderId/case-view` con `viewOrderCase`
   - DNI/documento: UNVERIFIED/deferred; el schema actual no tiene campo de DNI/documento y no se inventó columna ni migración
 - `POST /orders/:id/resend-confirmation`
+  - auth requerido
+  - request body obligatorio: `{ organizerId, reason }`
+  - capability real dedicada: `resendOrderConfirmation` (`viewOrderCase` no alcanza)
+  - permitidos: `owner`, `admin`
+  - denegados en el mapping actual: `staff`, `scanner`
+  - scope: primero capability sobre `organizerId`; luego búsqueda por `(order.id, organizerId)` para no exponer órdenes de otro organizer
+  - `reason` obligatorio, trimmeado, mínimo 12 caracteres, queda auditado
+  - elegibilidad: solo `order.status = paid`, tickets emitidos existentes y email reenviable válido
+  - no elegibles => `409`
+  - respuesta mínima: `{ orderId, status: "queued", emailMasked, auditId }`
+  - side effects prohibidos del contrato: no crea tickets nuevos, no toca inventory, no toca payment state, no resuelve `LatePaymentCase`
+  - auditoría: crea `AuditLog` `action=order_confirmation_resend_requested` con actor, organizer, event, reason, correlationId, queueJobId y `emailMasked`
+  - entrega async: `queued` significa encolado; no garantiza entrega final inmediata
+  - minimización: no devuelve customerEmail completo, providerRef, ticket code, qrPayload ni payloads raw
+  - deuda vigente: no hay outbox formal; el flujo depende de BullMQ + worker + SendGrid
 
 ## Trust boundary de payments webhook
 - `POST /webhooks/payments/:provider`

@@ -8,6 +8,7 @@ import { SendGridProvider } from "../modules/notifications/sendgridProvider.js";
 import { env } from "../lib/env.js";
 import { emitDomainEvent } from "../lib/domainEvents.js";
 import { DomainEventName } from "../domain/events.js";
+import type { NotificationJob } from "../modules/notifications/queue.js";
 
 const logger = pino().child({ service: "worker", queue: "notifications" });
 const provider = new SendGridProvider();
@@ -27,18 +28,21 @@ const bullmqJobDuration = new Histogram({
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10]
 });
 
+function maskEmail(email: string) {
+  const [local = "", domain = ""] = email.split("@");
+  if (!domain) return "***";
+  const visibleLocal = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2);
+  return `${visibleLocal}${"*".repeat(Math.max(3, local.length - visibleLocal.length))}@${domain}`;
+}
+
 const worker = new Worker(
   "notifications",
   async (job: Job) => {
     const startedAt = process.hrtime.bigint();
-    const payload = job.data as {
-      type: "order_paid_confirmation";
-      orderId: string;
-      meta?: { correlationId?: string };
-    };
+    const payload = job.data as NotificationJob;
     const correlationId = payload.meta?.correlationId ?? `job:${job.id}`;
 
-    if (payload.type !== "order_paid_confirmation") {
+    if (payload.type !== "order_paid_confirmation" && payload.type !== "order_confirmation_resend") {
       logger.warn({ jobId: job.id, jobName: job.name, attemptsMade: job.attemptsMade, correlationId }, "job type no soportado");
       return;
     }
@@ -52,7 +56,7 @@ const worker = new Worker(
       bullmqJobsTotal.inc({ queue: "notifications", job_name: job.name, status: "skipped" });
       return;
     }
-    if (order.confirmationEmailSentAt) {
+    if (payload.type === "order_paid_confirmation" && order.confirmationEmailSentAt) {
       bullmqJobsTotal.inc({ queue: "notifications", job_name: job.name, status: "skipped" });
       return;
     }
@@ -87,8 +91,16 @@ const worker = new Worker(
         organizerId: order.organizerId,
         eventId: order.eventId,
         orderId: order.id,
-        context: { source: "worker.notifications", provider: "sendgrid" },
-        payload: { messageId: result.messageId ?? null, recipient: order.customerEmail }
+        context: {
+          source: payload.type === "order_confirmation_resend" ? "worker.notifications.resend" : "worker.notifications",
+          provider: "sendgrid",
+          deliveryMode: payload.type === "order_confirmation_resend" ? "manual_resend" : "automatic"
+        },
+        payload: {
+          messageId: result.messageId ?? null,
+          recipientMasked: maskEmail(order.customerEmail),
+          ticketCount: order.tickets.length
+        }
       }, tx);
     });
 
