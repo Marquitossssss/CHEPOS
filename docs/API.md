@@ -13,6 +13,8 @@
     - `manageVenueLayouts`
     - `createEventLayoutSnapshot`
     - `viewEventLayoutSnapshot`
+    - `viewLayoutInventoryBindings`
+    - `manageLayoutInventoryBindings`
     - `viewOrganizerSettings`
     - `updateOrganizerSettings`
     - `viewOrganizerMembers`
@@ -41,6 +43,8 @@
 - `GET /layout-templates/:templateId/versions`
 - `POST /events/:eventId/layout-snapshot`
 - `GET /events/:eventId/layout-snapshot`
+- `POST /events/:eventId/layout-inventory-bindings`
+- `GET /events/:eventId/layout-inventory-bindings?organizerId=<uuid>`
 
 ### Invitations backend-only
 - `GET /organizers/:id/invitations`
@@ -94,7 +98,7 @@
   - `EventLayoutSnapshot`: snapshot inmutable del layout usado por un event
 - `reason` es obligatorio en todas las mutaciones del bloque y queda auditado
 - `publishedAt` se asigna automáticamente al crear `VenueLayoutVersion` en v0.1
-- inventory binding queda preparado pero no implementado
+- inventory binding v0.1 enlaza entidades del layout con `ticketTypeId`, apuntando al `EventLayoutSnapshot`
 - fuera de scope explícito en v0.1:
   - UI/editor visual/canvas
   - seat picker
@@ -109,12 +113,16 @@
     - `manageVenueLayouts`
     - `createEventLayoutSnapshot`
     - `viewEventLayoutSnapshot`
+    - `viewLayoutInventoryBindings`
+    - `manageLayoutInventoryBindings`
   - `staff`:
     - `viewVenues`
     - `viewVenueLayouts`
     - `viewEventLayoutSnapshot`
+    - `viewLayoutInventoryBindings`
     - no puede mutar venues/layouts
     - no puede crear snapshot
+    - no puede crear bindings
   - `scanner`:
     - sin capacidades del bloque venue layouts v0.1
 - contratos HTTP:
@@ -141,6 +149,22 @@
     - `snapshotData` copia completa e inmutable del `layoutData`
     - `snapshotHash` se genera siempre
   - `GET /events/:eventId/layout-snapshot`
+  - `POST /events/:eventId/layout-inventory-bindings`
+    - body: `{ organizerId, snapshotId, ticketTypeId, layoutEntityType, layoutEntityId, capacityLimit?, reason }`
+    - el binding apunta al snapshot inmutable del event, no al template/version vivos
+    - `ticketTypeId` debe pertenecer al mismo event
+    - `layoutEntityId` debe existir en `snapshotData`
+    - `layoutEntityType=seat` => `capacityLimit`, si viene, debe ser `1`
+    - `layoutEntityType=zone` => `capacityLimit` no puede exceder `zone.capacity` si existe
+    - duplicado por `(snapshotId, layoutEntityType, layoutEntityId, ticketTypeId)` => `409`
+    - side effects prohibidos:
+      - no cambia `TicketType.remaining`
+      - no cambia `TicketType.quota`
+      - no crea reservations
+      - no crea tickets
+      - no muta `snapshotData` ni `snapshotHash`
+  - `GET /events/:eventId/layout-inventory-bindings?organizerId=<uuid>`
+    - devuelve lista minimizada de bindings
 - schema explícito de `layoutData` (`schemaVersion = "venue-layout.v1"`):
   - `canvas.width > 0`
   - `canvas.height > 0`
@@ -157,11 +181,19 @@
   - `venue_layout_template_created`
   - `venue_layout_version_created`
   - `event_layout_snapshot_created`
+  - `event_layout_inventory_binding_created`
 - metadata mínima auditada:
   - `reason`, `organizerId`, `venueId`, `templateId`, `layoutVersionId`, `eventId`, `versionNumber`, `schemaVersion`, `layoutHash`, `snapshotHash`, `correlationId` si existe
 - metadata prohibida:
   - no guardar `layoutData` completo
   - no guardar `snapshotData` completo
+
+## Layout inventory binding v0.1
+- usa `ticketTypeId` como inventory ref real actual
+- NO crea `InventoryBucket`
+- NO implementa seat picker ni pricing por seat/zone
+- NO cambia checkout
+- no_oversell sigue dependiendo del sistema actual de `TicketType.remaining` + `InventoryReservation`
 
 ## Checkout
 - `POST /checkout/reserve`

@@ -7,6 +7,8 @@ export type AdminCapability =
   | "manageVenueLayouts"
   | "createEventLayoutSnapshot"
   | "viewEventLayoutSnapshot"
+  | "viewLayoutInventoryBindings"
+  | "manageLayoutInventoryBindings"
   | "viewOrganizerSettings"
   | "updateOrganizerSettings"
   | "viewOrganizerMembers"
@@ -36,6 +38,8 @@ const CAPABILITY_ORDER: AdminCapability[] = [
   "manageVenueLayouts",
   "createEventLayoutSnapshot",
   "viewEventLayoutSnapshot",
+  "viewLayoutInventoryBindings",
+  "manageLayoutInventoryBindings",
   "viewOrganizerSettings",
   "updateOrganizerSettings",
   "viewOrganizerMembers",
@@ -64,6 +68,8 @@ const roleCapabilities: Record<OrganizerRole, AdminCapability[]> = {
     "manageVenueLayouts",
     "createEventLayoutSnapshot",
     "viewEventLayoutSnapshot",
+    "viewLayoutInventoryBindings",
+    "manageLayoutInventoryBindings",
     "viewOrganizerSettings",
     "viewOrganizerMembers",
     "createEvent",
@@ -82,6 +88,7 @@ const roleCapabilities: Record<OrganizerRole, AdminCapability[]> = {
     "viewVenues",
     "viewVenueLayouts",
     "viewEventLayoutSnapshot",
+    "viewLayoutInventoryBindings",
     "viewEventDashboard",
     "operateEvent",
     "scanTickets",
