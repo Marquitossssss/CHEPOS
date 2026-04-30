@@ -44,6 +44,8 @@ const posAreaSchema = z.object({
   name: z.string().trim().min(1)
 }).passthrough();
 
+const layoutEntityTypeSchema = z.enum(["zone", "seat"]);
+
 const layoutDataSchema = z.object({
   schemaVersion: z.literal(schemaVersionValue),
   canvas: z.object({
@@ -126,6 +128,17 @@ function jsonRecord(value: unknown) {
 
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return stableNormalize(value) as Prisma.InputJsonValue;
+}
+
+function findSnapshotLayoutEntity(snapshotData: Record<string, any>, layoutEntityType: z.infer<typeof layoutEntityTypeSchema>, layoutEntityId: string) {
+  const zones = Array.isArray(snapshotData.zones) ? snapshotData.zones : [];
+  const seats = Array.isArray(snapshotData.seats) ? snapshotData.seats : [];
+
+  if (layoutEntityType === "zone") {
+    return zones.find((zone) => zone && typeof zone === "object" && zone.id === layoutEntityId) ?? null;
+  }
+
+  return seats.find((seat) => seat && typeof seat === "object" && seat.id === layoutEntityId) ?? null;
 }
 
 export async function registerVenueLayoutRoutes(app: FastifyInstance, deps: { verifyAuth: VerifyAuth }) {
@@ -515,5 +528,165 @@ export async function registerVenueLayoutRoutes(app: FastifyInstance, deps: { ve
     });
     if (!snapshot) throw app.httpErrors.notFound("Layout snapshot no encontrado");
     return snapshot;
+  });
+
+  app.post("/events/:eventId/layout-inventory-bindings", { preHandler: verifyAuth }, async (req: any, reply) => {
+    const user = req.user as JwtPayload;
+    const params = z.object({ eventId: z.string().uuid() }).parse(req.params ?? {});
+    const body = z.object({
+      organizerId: z.string().uuid(),
+      snapshotId: z.string().uuid(),
+      ticketTypeId: z.string().uuid().optional(),
+      inventoryBucketId: z.string().uuid().optional(),
+      layoutEntityType: layoutEntityTypeSchema,
+      layoutEntityId: z.string().trim().min(1),
+      capacityLimit: z.number().int().positive().optional(),
+      reason: reasonSchema
+    }).superRefine((value, ctx) => {
+      if (value.ticketTypeId && value.inventoryBucketId) {
+        ctx.addIssue({ code: "custom", path: ["ticketTypeId"], message: "usar exactamente una referencia de inventario" });
+      }
+      if (!value.ticketTypeId && !value.inventoryBucketId) {
+        ctx.addIssue({ code: "custom", path: ["ticketTypeId"], message: "ticketTypeId es obligatorio en v0.1" });
+      }
+      if (value.inventoryBucketId) {
+        ctx.addIssue({ code: "custom", path: ["inventoryBucketId"], message: "inventoryBucketId no está soportado en v0.1" });
+      }
+    }).parse(req.body ?? {});
+
+    await requireOrganizerCapability(app, user.userId, body.organizerId, "manageLayoutInventoryBindings");
+
+    const event = await prisma.event.findFirst({
+      where: { id: params.eventId, organizerId: body.organizerId },
+      select: { id: true, organizerId: true }
+    });
+    if (!event) throw app.httpErrors.notFound("Evento no encontrado");
+
+    const snapshot = await prisma.eventLayoutSnapshot.findFirst({
+      where: { id: body.snapshotId, eventId: event.id },
+      select: { id: true, eventId: true, snapshotData: true, snapshotHash: true }
+    });
+    if (!snapshot) throw app.httpErrors.notFound("Layout snapshot no encontrado");
+
+    const ticketType = await prisma.ticketType.findFirst({
+      where: { id: body.ticketTypeId!, eventId: event.id },
+      select: { id: true, eventId: true, name: true, quota: true, remaining: true }
+    });
+    if (!ticketType) throw app.httpErrors.notFound("Ticket type no encontrado");
+
+    const snapshotData = jsonRecord(snapshot.snapshotData);
+    const entity = findSnapshotLayoutEntity(snapshotData, body.layoutEntityType, body.layoutEntityId);
+    if (!entity) throw app.httpErrors.badRequest("layoutEntityId no existe en el snapshot indicado");
+
+    if (body.layoutEntityType === "seat" && body.capacityLimit !== undefined && body.capacityLimit !== 1) {
+      throw app.httpErrors.badRequest("capacityLimit para seat debe ser 1");
+    }
+
+    if (body.layoutEntityType === "zone" && body.capacityLimit !== undefined) {
+      const zoneCapacity = typeof entity.capacity === "number" ? entity.capacity : null;
+      if (zoneCapacity !== null && body.capacityLimit > zoneCapacity) {
+        throw app.httpErrors.badRequest("capacityLimit excede la capacidad física de la zone");
+      }
+    }
+
+    try {
+      const binding = await prisma.$transaction(async (tx) => {
+        const created = await tx.eventLayoutInventoryBinding.create({
+          data: {
+            eventLayoutSnapshotId: snapshot.id,
+            eventId: event.id,
+            ticketTypeId: ticketType.id,
+            layoutEntityType: body.layoutEntityType,
+            layoutEntityId: body.layoutEntityId,
+            capacityLimit: body.capacityLimit,
+            isActive: true,
+            createdByUserId: user.userId
+          }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            organizerId: body.organizerId,
+            actorUserId: user.userId,
+            action: "event_layout_inventory_binding_created",
+            entityType: "event_layout_inventory_binding",
+            entityId: created.id,
+            metadata: {
+              reason: body.reason,
+              organizerId: body.organizerId,
+              eventId: event.id,
+              snapshotId: snapshot.id,
+              bindingId: created.id,
+              layoutEntityType: created.layoutEntityType,
+              layoutEntityId: created.layoutEntityId,
+              inventoryRefType: "ticketType",
+              inventoryRefId: created.ticketTypeId,
+              capacityLimit: created.capacityLimit,
+              correlationId: req.correlationId
+            }
+          }
+        });
+
+        return created;
+      });
+
+      reply.code(201);
+      return {
+        id: binding.id,
+        eventId: binding.eventId,
+        snapshotId: binding.eventLayoutSnapshotId,
+        layoutEntityType: binding.layoutEntityType,
+        layoutEntityId: binding.layoutEntityId,
+        inventoryRef: {
+          type: "ticketType",
+          id: binding.ticketTypeId,
+          name: ticketType.name
+        },
+        capacityLimit: binding.capacityLimit,
+        isActive: binding.isActive
+      };
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        throw app.httpErrors.conflict("Ya existe un binding para esa entidad del snapshot y ticket type");
+      }
+      throw error;
+    }
+  });
+
+  app.get("/events/:eventId/layout-inventory-bindings", { preHandler: verifyAuth }, async (req: any) => {
+    const user = req.user as JwtPayload;
+    const params = z.object({ eventId: z.string().uuid() }).parse(req.params ?? {});
+    const query = z.object({ organizerId: z.string().uuid() }).parse(req.query ?? {});
+
+    await requireOrganizerCapability(app, user.userId, query.organizerId, "viewLayoutInventoryBindings");
+
+    const event = await prisma.event.findFirst({
+      where: { id: params.eventId, organizerId: query.organizerId },
+      select: { id: true }
+    });
+    if (!event) throw app.httpErrors.notFound("Evento no encontrado");
+
+    const rows = await prisma.eventLayoutInventoryBinding.findMany({
+      where: { eventId: event.id },
+      include: { ticketType: { select: { id: true, name: true } } },
+      orderBy: [{ createdAt: "asc" }]
+    });
+
+    return {
+      bindings: rows.map((row) => ({
+        id: row.id,
+        eventId: row.eventId,
+        snapshotId: row.eventLayoutSnapshotId,
+        layoutEntityType: row.layoutEntityType,
+        layoutEntityId: row.layoutEntityId,
+        inventoryRef: {
+          type: "ticketType",
+          id: row.ticketType.id,
+          name: row.ticketType.name
+        },
+        capacityLimit: row.capacityLimit,
+        isActive: row.isActive
+      }))
+    };
   });
 }

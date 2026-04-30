@@ -196,6 +196,8 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageVenueLayouts: true,
       createEventLayoutSnapshot: true,
       viewEventLayoutSnapshot: true,
+      viewLayoutInventoryBindings: true,
+      manageLayoutInventoryBindings: true,
       viewOrganizerSettings: true,
       updateOrganizerSettings: true,
       viewOrganizerMembers: true,
@@ -218,6 +220,8 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageVenueLayouts: true,
       createEventLayoutSnapshot: true,
       viewEventLayoutSnapshot: true,
+      viewLayoutInventoryBindings: true,
+      manageLayoutInventoryBindings: true,
       viewOrganizerSettings: true,
       updateOrganizerSettings: false,
       viewOrganizerMembers: true,
@@ -240,6 +244,8 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageVenueLayouts: false,
       createEventLayoutSnapshot: false,
       viewEventLayoutSnapshot: true,
+      viewLayoutInventoryBindings: true,
+      manageLayoutInventoryBindings: false,
       viewOrganizerSettings: false,
       updateOrganizerSettings: false,
       viewOrganizerMembers: false,
@@ -265,6 +271,8 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
       manageVenueLayouts: false,
       createEventLayoutSnapshot: false,
       viewEventLayoutSnapshot: false,
+      viewLayoutInventoryBindings: false,
+      manageLayoutInventoryBindings: false,
       viewOrganizerSettings: false,
       updateOrganizerSettings: false,
       viewOrganizerMembers: false,
@@ -313,6 +321,8 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     expect(staffContextJson.capabilities.manageVenueLayouts).toBe(false);
     expect(staffContextJson.capabilities.createEventLayoutSnapshot).toBe(false);
     expect(staffContextJson.capabilities.viewEventLayoutSnapshot).toBe(true);
+    expect(staffContextJson.capabilities.viewLayoutInventoryBindings).toBe(true);
+    expect(staffContextJson.capabilities.manageLayoutInventoryBindings).toBe(false);
   });
 
   it("/authz/context rejects eventId that does not belong to organizerId", async () => {

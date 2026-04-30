@@ -125,6 +125,11 @@ enum VenueLayoutMode {
   mixed
 }
 
+enum LayoutEntityType {
+  zone
+  seat
+}
+
 model User {
   id                          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email                       String                 @unique
@@ -138,6 +143,7 @@ model User {
   scans                       TicketScan[]
   createdVenueLayoutVersions  VenueLayoutVersion[]   @relation("VenueLayoutVersionCreatedBy")
   createdEventLayoutSnapshots EventLayoutSnapshot[]  @relation("EventLayoutSnapshotCreatedBy")
+  createdEventLayoutInventoryBindings EventLayoutInventoryBinding[] @relation("EventLayoutInventoryBindingCreatedBy")
 
   @@index([createdAt])
 }
@@ -220,6 +226,7 @@ model Event {
   scans       TicketScan[]
   eventArtists EventArtist[]
   layoutSnapshot EventLayoutSnapshot?
+  layoutInventoryBindings EventLayoutInventoryBinding[]
 
   @@unique([organizerId, slug])
   @@index([organizerId, visibility])
@@ -311,6 +318,7 @@ model EventLayoutSnapshot {
   template        VenueLayoutTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   layoutVersion   VenueLayoutVersion  @relation(fields: [layoutVersionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   createdByUser   User                @relation("EventLayoutSnapshotCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  inventoryBindings EventLayoutInventoryBinding[]
 
   @@index([venueId, createdAt])
   @@index([templateId, createdAt])
@@ -352,6 +360,7 @@ model TicketType {
   orderItems     OrderItem[]
   reservations   InventoryReservation[]
   tickets        Ticket[]
+  layoutInventoryBindings EventLayoutInventoryBinding[]
 
   @@index([eventId])
   @@index([eventId, salesStart, salesEnd])
@@ -459,6 +468,29 @@ model InventoryReservation {
 
   @@index([ticketTypeId, expiresAt, releasedAt])
   @@index([orderId, releasedAt])
+}
+
+model EventLayoutInventoryBinding {
+  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventLayoutSnapshotId String               @db.Uuid
+  eventId               String               @db.Uuid
+  ticketTypeId          String               @db.Uuid
+  layoutEntityType      LayoutEntityType
+  layoutEntityId        String
+  capacityLimit         Int?
+  isActive              Boolean              @default(true)
+  createdByUserId       String               @db.Uuid
+  createdAt             DateTime             @default(now()) @db.Timestamp(6)
+  updatedAt             DateTime             @updatedAt @db.Timestamp(6)
+  eventLayoutSnapshot   EventLayoutSnapshot  @relation(fields: [eventLayoutSnapshotId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  event                 Event                @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ticketType            TicketType           @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdByUser         User                 @relation("EventLayoutInventoryBindingCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([eventLayoutSnapshotId, layoutEntityType, layoutEntityId, ticketTypeId])
+  @@index([eventId, createdAt])
+  @@index([eventLayoutSnapshotId, isActive, createdAt])
+  @@index([ticketTypeId, createdAt])
 }
 
 model Payment {
