@@ -105,30 +105,53 @@ enum ArtistStatus {
   inactive
 }
 
+enum VenueType {
+  theater
+  stadium
+  arena
+  club
+  general_admission
+  mixed
+}
+
+enum VenueStatus {
+  active
+  inactive
+}
+
+enum VenueLayoutMode {
+  seated
+  ga
+  mixed
+}
+
 model User {
-  id                          String                 @id @default(uuid())
+  id                          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email                       String                 @unique
   passwordHash                String
-  createdAt                   DateTime               @default(now())
+  createdAt                   DateTime               @default(now()) @db.Timestamp(6)
   memberships                 Membership[]
   createdOrganizerInvitations OrganizerInvitation[]  @relation("OrganizerInvitationCreatedBy")
   acceptedOrganizerInvitations OrganizerInvitation[] @relation("OrganizerInvitationAcceptedBy")
   revokedOrganizerInvitations OrganizerInvitation[]  @relation("OrganizerInvitationRevokedBy")
   orders                      Order[]
   scans                       TicketScan[]
+  createdVenueLayoutVersions  VenueLayoutVersion[]   @relation("VenueLayoutVersionCreatedBy")
+  createdEventLayoutSnapshots EventLayoutSnapshot[]  @relation("EventLayoutSnapshotCreatedBy")
 
   @@index([createdAt])
 }
 
 model Organizer {
-  id            String                @id @default(uuid())
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name          String
   slug          String                @unique
-  createdAt     DateTime              @default(now())
+  createdAt     DateTime              @default(now()) @db.Timestamp(6)
   memberships   Membership[]
   invitations   OrganizerInvitation[]
   events        Event[]
   orders        Order[]
+  venues        Venue[]
   serviceFeeBps Int                   @default(0)
   taxBps        Int                   @default(0)
 
@@ -136,9 +159,9 @@ model Organizer {
 }
 
 model Membership {
-  id                   String                 @id @default(uuid())
-  userId               String
-  organizerId          String
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String                 @db.Uuid
+  organizerId          String                 @db.Uuid
   role                 OrganizerRole
   user                 User                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   organizer            Organizer              @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -149,7 +172,7 @@ model Membership {
 }
 
 model OrganizerInvitation {
-  id               String                    @id @default(uuid()) @db.Uuid
+  id               String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizerId      String                    @db.Uuid
   email            String
   emailCanonical   String
@@ -178,23 +201,25 @@ model OrganizerInvitation {
 }
 
 model Event {
-  id          String          @id @default(uuid())
-  organizerId String
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizerId String          @db.Uuid
   name        String
   slug        String
   description String?
   venue       String?
   timezone    String
-  startsAt    DateTime
-  endsAt      DateTime
+  startsAt    DateTime        @db.Timestamp(6)
+  endsAt      DateTime        @db.Timestamp(6)
   visibility  EventVisibility @default(draft)
   capacity    Int
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime        @default(now()) @db.Timestamp(6)
   organizer   Organizer       @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   ticketTypes TicketType[]
   orders      Order[]
+  tickets     Ticket[]
   scans       TicketScan[]
   eventArtists EventArtist[]
+  layoutSnapshot EventLayoutSnapshot?
 
   @@unique([organizerId, slug])
   @@index([organizerId, visibility])
@@ -219,6 +244,79 @@ model Artist {
   @@index([displayName])
 }
 
+model Venue {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizerId  String                @db.Uuid
+  name         String
+  slug         String
+  venueType    VenueType
+  locationJson Json?
+  status       VenueStatus           @default(active)
+  createdAt    DateTime              @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime              @updatedAt @db.Timestamp(6)
+  organizer    Organizer             @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  templates    VenueLayoutTemplate[]
+  snapshots    EventLayoutSnapshot[]
+
+  @@unique([organizerId, slug])
+  @@index([organizerId, status, createdAt])
+}
+
+model VenueLayoutTemplate {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId     String                @db.Uuid
+  name        String
+  description String?
+  layoutMode  VenueLayoutMode
+  isActive    Boolean               @default(true)
+  createdAt   DateTime              @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime              @updatedAt @db.Timestamp(6)
+  venue       Venue                 @relation(fields: [venueId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  versions    VenueLayoutVersion[]
+  snapshots   EventLayoutSnapshot[]
+
+  @@index([venueId, isActive, createdAt])
+}
+
+model VenueLayoutVersion {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId      String                @db.Uuid
+  versionNumber   Int
+  schemaVersion   String
+  layoutData      Json
+  layoutHash      String
+  publishedAt     DateTime              @db.Timestamp(6)
+  createdByUserId String                @db.Uuid
+  createdAt       DateTime              @default(now()) @db.Timestamp(6)
+  template        VenueLayoutTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdByUser   User                  @relation("VenueLayoutVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  snapshots       EventLayoutSnapshot[]
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId, publishedAt, createdAt])
+}
+
+model EventLayoutSnapshot {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId         String              @unique @db.Uuid
+  venueId         String              @db.Uuid
+  templateId      String              @db.Uuid
+  layoutVersionId String              @db.Uuid
+  snapshotData    Json
+  snapshotHash    String
+  createdByUserId String              @db.Uuid
+  createdAt       DateTime            @default(now()) @db.Timestamp(6)
+  event           Event               @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  venue           Venue               @relation(fields: [venueId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  template        VenueLayoutTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  layoutVersion   VenueLayoutVersion  @relation(fields: [layoutVersionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdByUser   User                @relation("EventLayoutSnapshotCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([venueId, createdAt])
+  @@index([templateId, createdAt])
+  @@index([layoutVersionId, createdAt])
+}
+
 model EventArtist {
   id           String   @id @default(uuid()) @db.Uuid
   eventId      String   @db.Uuid
@@ -238,18 +336,18 @@ model EventArtist {
 }
 
 model TicketType {
-  id             String                 @id @default(uuid())
-  eventId        String
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId        String                 @db.Uuid
   name           String
   priceCents     Int
   currency       String
   quota          Int
-  salesStart     DateTime?
-  salesEnd       DateTime?
+  salesStart     DateTime?              @db.Timestamp(6)
+  salesEnd       DateTime?              @db.Timestamp(6)
   maxPerOrder    Int                    @default(10)
   requiredFields Json?
   remaining      Int                    @default(0)
-  createdAt      DateTime               @default(now())
+  createdAt      DateTime               @default(now()) @db.Timestamp(6)
   event          Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   orderItems     OrderItem[]
   reservations   InventoryReservation[]
@@ -260,10 +358,10 @@ model TicketType {
 }
 
 model Order {
-  id                         String                 @id @default(uuid())
-  organizerId                String
-  eventId                    String
-  userId                     String?
+  id                         String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizerId                String                 @db.Uuid
+  eventId                    String                 @db.Uuid
+  userId                     String?                @db.Uuid
   orderNumber                String                 @unique
   customerEmail              String
   status                     OrderStatus            @default(pending)
@@ -271,8 +369,8 @@ model Order {
   feeCents                   Int                    @default(0)
   taxCents                   Int                    @default(0)
   totalCents                 Int                    @default(0)
-  reservedUntil              DateTime?
-  createdAt                  DateTime               @default(now())
+  reservedUntil              DateTime?              @db.Timestamp(6)
+  createdAt                  DateTime               @default(now()) @db.Timestamp(6)
   updatedAt                  DateTime               @updatedAt
   organizer                  Organizer              @relation(fields: [organizerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   event                      Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -298,9 +396,9 @@ model Order {
 }
 
 model OrderItem {
-  id             String     @id @default(uuid())
-  orderId        String
-  ticketTypeId   String
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String     @db.Uuid
+  ticketTypeId   String     @db.Uuid
   quantity       Int
   unitPriceCents Int
   totalCents     Int
@@ -311,16 +409,17 @@ model OrderItem {
 }
 
 model Ticket {
-  id           String       @id @default(uuid())
-  orderId      String
-  ticketTypeId String
-  eventId      String
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId      String       @db.Uuid
+  ticketTypeId String       @db.Uuid
+  eventId      String       @db.Uuid
   status       TicketStatus @default(issued)
   code         String       @unique
   qrPayload    String
-  issuedAt     DateTime     @default(now())
-  checkedInAt  DateTime?
+  issuedAt     DateTime     @default(now()) @db.Timestamp(6)
+  checkedInAt  DateTime?    @db.Timestamp(6)
   checkedInBy  String?
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   ticketType   TicketType   @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   scans        TicketScan[]
@@ -330,11 +429,11 @@ model Ticket {
 }
 
 model TicketScan {
-  id          String   @id @default(uuid())
-  ticketId    String
-  eventId     String
-  scannedById String?
-  scannedAt   DateTime @default(now())
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId    String   @db.Uuid
+  eventId     String   @db.Uuid
+  scannedById String?  @db.Uuid
+  scannedAt   DateTime @default(now()) @db.Timestamp(6)
   result      String
   reason      String?
   gate        String?
@@ -347,13 +446,13 @@ model TicketScan {
 }
 
 model InventoryReservation {
-  id           String     @id @default(uuid())
-  orderId      String
-  ticketTypeId String
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId      String     @db.Uuid
+  ticketTypeId String     @db.Uuid
   quantity     Int
-  expiresAt    DateTime
-  createdAt    DateTime   @default(now())
-  releasedAt   DateTime?
+  expiresAt    DateTime   @db.Timestamp(6)
+  createdAt    DateTime   @default(now()) @db.Timestamp(6)
+  releasedAt   DateTime?  @db.Timestamp(6)
   releaseReason String?
   order        Order      @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   ticketType   TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -363,13 +462,13 @@ model InventoryReservation {
 }
 
 model Payment {
-  id               String            @id @default(uuid())
-  orderId          String
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId          String            @db.Uuid
   provider         String
   providerRef      String
   status           String
   amountCents      Int
-  createdAt        DateTime          @default(now())
+  createdAt        DateTime          @default(now()) @db.Timestamp(6)
   order            Order             @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   latePaymentCases LatePaymentCase[]
 
@@ -378,7 +477,7 @@ model Payment {
 }
 
 model PaymentEvent {
-  id                String   @id @default(uuid())
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   provider          String
   providerEventId   String
   providerPaymentId String?
@@ -399,10 +498,10 @@ model PaymentEvent {
 }
 
 model ProcessedWebhookEvent {
-  id              String   @id @default(uuid())
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   provider        String
   externalEventId String
-  processedAt     DateTime @default(now())
+  processedAt     DateTime @default(now()) @db.Timestamp(6)
 
   @@unique([provider, externalEventId])
   @@index([processedAt])
@@ -445,20 +544,20 @@ model PaymentIdempotencyKey {
 }
 
 model LatePaymentCase {
-  id                String                @id @default(uuid())
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt         DateTime              @default(now()) @db.Timestamp(6)
+  updatedAt         DateTime              @default(now()) @updatedAt @db.Timestamp(6)
   version           Int                   @default(0)
-  orderId           String
-  reserveId         String?
+  orderId           String                @db.Uuid
+  reserveId         String?               @db.Uuid
   provider          String
   providerPaymentId String?
-  paymentAttemptId  String?
+  paymentAttemptId  String?               @db.Uuid
   inventoryReleased Boolean               @default(false)
   status            LatePaymentCaseStatus @default(PENDING)
-  detectedAt        DateTime              @default(now())
+  detectedAt        DateTime              @default(now()) @db.Timestamp(6)
   resolutionNotes   String?
-  resolvedAt        DateTime?
+  resolvedAt        DateTime?             @db.Timestamp(6)
   resolvedBy        String?
   order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   paymentAttempt    Payment?              @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull, onUpdate: Cascade)
@@ -469,15 +568,15 @@ model LatePaymentCase {
 }
 
 model EmailEvent {
-  id        String   @id @default(uuid())
-  orderId   String?
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String?  @db.Uuid
   provider  String
   eventType String
   sgEventId String?
   messageId String?
   recipient String?
   payload   Json
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamp(6)
   order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@unique([provider, sgEventId])
@@ -486,7 +585,7 @@ model EmailEvent {
 }
 
 model DomainEvent {
-  id            String              @id @default(uuid())
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type          DomainEventType
   version       Int                 @default(1)
   correlationId String?
@@ -494,13 +593,13 @@ model DomainEvent {
   actorId       String?
   aggregateType DomainAggregateType
   aggregateId   String
-  eventId       String?
-  orderId       String?
-  ticketId      String?
-  organizerId   String?
+  eventId       String?             @db.Uuid
+  orderId       String?             @db.Uuid
+  ticketId      String?             @db.Uuid
+  organizerId   String?             @db.Uuid
   context       Json
   payload       Json
-  occurredAt    DateTime            @default(now())
+  occurredAt    DateTime            @default(now()) @db.Timestamp(6)
 
   @@index([eventId, occurredAt])
   @@index([organizerId, occurredAt])
@@ -510,9 +609,9 @@ model DomainEvent {
 }
 
 model ReserveIdempotencyKey {
-  id              String   @id @default(uuid())
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientRequestId String   @unique
-  orderId         String?
+  orderId         String?  @db.Uuid
   status          String   @default("completed")
   createdAt       DateTime @default(now())
   order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
@@ -522,7 +621,7 @@ model ReserveIdempotencyKey {
 }
 
 model ConfirmIdempotencyKey {
-  id               String   @id @default(uuid())
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientRequestId  String   @unique
   orderId          String   @db.Uuid
   paymentReference String
@@ -534,14 +633,14 @@ model ConfirmIdempotencyKey {
 }
 
 model AuditLog {
-  id          String   @id @default(uuid())
-  organizerId String?
-  actorUserId String?
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizerId String?  @db.Uuid
+  actorUserId String?  @db.Uuid
   action      String
   entityType  String
   entityId    String
   metadata    Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
 
   @@index([organizerId, createdAt])
   @@index([entityType, entityId])

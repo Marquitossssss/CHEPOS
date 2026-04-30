@@ -190,6 +190,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
 
   it("maps capabilities coherently for owner/admin/staff/scanner", () => {
     expect(getOrganizerRoleCapabilities("owner")).toMatchObject({
+      viewVenues: true,
+      manageVenues: true,
+      viewVenueLayouts: true,
+      manageVenueLayouts: true,
+      createEventLayoutSnapshot: true,
+      viewEventLayoutSnapshot: true,
       viewOrganizerSettings: true,
       updateOrganizerSettings: true,
       viewOrganizerMembers: true,
@@ -206,6 +212,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("admin")).toMatchObject({
+      viewVenues: true,
+      manageVenues: true,
+      viewVenueLayouts: true,
+      manageVenueLayouts: true,
+      createEventLayoutSnapshot: true,
+      viewEventLayoutSnapshot: true,
       viewOrganizerSettings: true,
       updateOrganizerSettings: false,
       viewOrganizerMembers: true,
@@ -222,6 +234,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("staff")).toMatchObject({
+      viewVenues: true,
+      manageVenues: false,
+      viewVenueLayouts: true,
+      manageVenueLayouts: false,
+      createEventLayoutSnapshot: false,
+      viewEventLayoutSnapshot: true,
       viewOrganizerSettings: false,
       updateOrganizerSettings: false,
       viewOrganizerMembers: false,
@@ -241,6 +259,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     });
 
     expect(getOrganizerRoleCapabilities("scanner")).toMatchObject({
+      viewVenues: false,
+      manageVenues: false,
+      viewVenueLayouts: false,
+      manageVenueLayouts: false,
+      createEventLayoutSnapshot: false,
+      viewEventLayoutSnapshot: false,
       viewOrganizerSettings: false,
       updateOrganizerSettings: false,
       viewOrganizerMembers: false,
@@ -283,6 +307,12 @@ describe.skipIf(!hasIntegrationEnv)("admin authz phase 1 integration", () => {
     expect(staffContextJson.capabilities.viewOrderCase).toBe(true);
     expect(staffContextJson.capabilities.sensitiveOrderLookup).toBe(false);
     expect(staffContextJson.capabilities.resendOrderConfirmation).toBe(false);
+    expect(staffContextJson.capabilities.viewVenues).toBe(true);
+    expect(staffContextJson.capabilities.manageVenues).toBe(false);
+    expect(staffContextJson.capabilities.viewVenueLayouts).toBe(true);
+    expect(staffContextJson.capabilities.manageVenueLayouts).toBe(false);
+    expect(staffContextJson.capabilities.createEventLayoutSnapshot).toBe(false);
+    expect(staffContextJson.capabilities.viewEventLayoutSnapshot).toBe(true);
   });
 
   it("/authz/context rejects eventId that does not belong to organizerId", async () => {
