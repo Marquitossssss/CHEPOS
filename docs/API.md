@@ -7,6 +7,12 @@
 - `GET /authz/context`
   - para esta fase expone capacidades canónicas de organizer authz
   - capabilities de esta fase:
+    - `viewVenues`
+    - `manageVenues`
+    - `viewVenueLayouts`
+    - `manageVenueLayouts`
+    - `createEventLayoutSnapshot`
+    - `viewEventLayoutSnapshot`
     - `viewOrganizerSettings`
     - `updateOrganizerSettings`
     - `viewOrganizerMembers`
@@ -26,6 +32,15 @@
 - `GET /events?organizerId=<uuid>`
 - `POST /events/:id/ticket-types`
 - `GET /events/:id/ticket-types`
+- `POST /venues`
+- `GET /venues?organizerId=<uuid>`
+- `GET /venues/:venueId`
+- `POST /venues/:venueId/layout-templates`
+- `GET /venues/:venueId/layout-templates`
+- `POST /layout-templates/:templateId/versions`
+- `GET /layout-templates/:templateId/versions`
+- `POST /events/:eventId/layout-snapshot`
+- `GET /events/:eventId/layout-snapshot`
 
 ### Invitations backend-only
 - `GET /organizers/:id/invitations`
@@ -70,6 +85,83 @@
   - resend rota token y el anterior deja de ser válido
   - onboarding de usuario inexistente queda fuera de scope
   - email delivery real queda fuera de scope
+
+## Venue Layouts v0.1 (backend foundation)
+- modelos conceptuales:
+  - `Venue`: recinto versionable por organizer
+  - `VenueLayoutTemplate`: plantilla lógica de layout por venue
+  - `VenueLayoutVersion`: versión publicada del template
+  - `EventLayoutSnapshot`: snapshot inmutable del layout usado por un event
+- `reason` es obligatorio en todas las mutaciones del bloque y queda auditado
+- `publishedAt` se asigna automáticamente al crear `VenueLayoutVersion` en v0.1
+- inventory binding queda preparado pero no implementado
+- fuera de scope explícito en v0.1:
+  - UI/editor visual/canvas
+  - seat picker
+  - pricing
+  - inventario comercial
+  - imports masivos
+- capabilities finales del bloque:
+  - `owner`, `admin`:
+    - `viewVenues`
+    - `manageVenues`
+    - `viewVenueLayouts`
+    - `manageVenueLayouts`
+    - `createEventLayoutSnapshot`
+    - `viewEventLayoutSnapshot`
+  - `staff`:
+    - `viewVenues`
+    - `viewVenueLayouts`
+    - `viewEventLayoutSnapshot`
+    - no puede mutar venues/layouts
+    - no puede crear snapshot
+  - `scanner`:
+    - sin capacidades del bloque venue layouts v0.1
+- contratos HTTP:
+  - `POST /venues`
+    - body: `{ organizerId, name, slug?, venueType, location?, reason }`
+  - `GET /venues?organizerId=<uuid>`
+    - lista solo venues del organizer en scope
+  - `GET /venues/:venueId`
+    - detalle del venue en scope
+  - `POST /venues/:venueId/layout-templates`
+    - body: `{ name, description?, layoutMode, reason }`
+  - `GET /venues/:venueId/layout-templates`
+  - `POST /layout-templates/:templateId/versions`
+    - body: `{ versionNumber?, schemaVersion: "venue-layout.v1", layoutData, reason }`
+    - si `versionNumber` no viene, la API asigna el próximo número de forma transaccional
+    - `versionNumber` duplicado => `409`
+    - `layoutHash` se genera siempre
+  - `GET /layout-templates/:templateId/versions`
+  - `POST /events/:eventId/layout-snapshot`
+    - body: `{ organizerId, layoutVersionId, reason }`
+    - el event debe pertenecer al organizer
+    - la layout version debe pertenecer al mismo organizer y estar publicada
+    - un segundo snapshot para el mismo event => `409`
+    - `snapshotData` copia completa e inmutable del `layoutData`
+    - `snapshotHash` se genera siempre
+  - `GET /events/:eventId/layout-snapshot`
+- schema explícito de `layoutData` (`schemaVersion = "venue-layout.v1"`):
+  - `canvas.width > 0`
+  - `canvas.height > 0`
+  - `canvas.unit ∈ {px, m}`
+  - arrays obligatorios: `zones`, `seats`, `accessPoints`, `posAreas`
+  - ids no vacíos y únicos dentro de cada colección
+  - `seat.zoneId` debe existir en `zones`
+  - `layoutMode = seated` => al menos un seat activo
+  - `layoutMode = ga` => puede no haber seats
+  - `layoutMode = mixed` => al menos una zone
+  - no se acepta JSON opaco sin objetos semánticos
+- auditoría mínima por acción:
+  - `venue_created`
+  - `venue_layout_template_created`
+  - `venue_layout_version_created`
+  - `event_layout_snapshot_created`
+- metadata mínima auditada:
+  - `reason`, `organizerId`, `venueId`, `templateId`, `layoutVersionId`, `eventId`, `versionNumber`, `schemaVersion`, `layoutHash`, `snapshotHash`, `correlationId` si existe
+- metadata prohibida:
+  - no guardar `layoutData` completo
+  - no guardar `snapshotData` completo
 
 ## Checkout
 - `POST /checkout/reserve`

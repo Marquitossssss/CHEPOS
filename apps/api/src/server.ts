@@ -53,6 +53,7 @@ import { registerDashboardRoutes } from "./modules/events/dashboard/dashboard.ro
 import { createArtist, linkArtistToEvent, listArtists, listArtistsByEvent, listEventsByArtist, unlinkArtistFromEvent, updateArtist, updateEventArtist } from "./modules/artist/artist.service.js";
 import { applyPaymentEvent } from "./modules/payments/applyPaymentEvent.js";
 import { materializePayment } from "./modules/payments/materializePayment.js";
+import { registerVenueLayoutRoutes } from "./modules/venues/venueLayouts.routes.js";
 import { registerOrganizerInvitationRoutes } from "./routes/organizerInvitations.routes.js";
 
 export const app = Fastify({ logger: true });
@@ -248,6 +249,7 @@ async function validateTicketRecord(db: TicketDbLike, code: string): Promise<Tic
 
 registerDashboardRoutes(app, verifyAuth);
 await registerOrganizerInvitationRoutes(app, { verifyAuth });
+await registerVenueLayoutRoutes(app, { verifyAuth });
 
 app.get("/health", async () => ({ ok: true }));
 
