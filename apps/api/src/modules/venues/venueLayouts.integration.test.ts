@@ -591,6 +591,169 @@ describe.skipIf(!hasIntegrationEnv)("venue layouts backend foundation", () => {
     expect(snapshotAuditSerialized).not.toContain(`SECRET-AFTER-SNAPSHOT-${scenario.suffix}`);
     expect(snapshotAuditSerialized).not.toContain(`zone-main-snap-v1-${scenario.suffix}`);
   });
+
+  it("hardens snapshot invariants and audit metadata naming", async () => {
+    const scenario = await seedScenario();
+    const ownerToken = await login(scenario.owner.email, scenario.owner.password);
+    const adminToken = await login(scenario.admin.email, scenario.admin.password);
+    const otherOwnerToken = await login(scenario.otherOwner.email, scenario.otherOwner.password);
+
+    const venue = await authFetch("/venues", ownerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        organizerId: scenario.organizer.id,
+        name: `Hardening Venue ${scenario.suffix}`,
+        venueType: "theater",
+        reason: "crear venue para hardening final"
+      })
+    });
+    expect(venue.status).toBe(201);
+    const venueJson = await venue.json() as any;
+    created.venueIds.push(venueJson.id);
+
+    const template = await authFetch(`/venues/${venueJson.id}/layout-templates`, ownerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        name: `Hardening Template ${scenario.suffix}`,
+        layoutMode: "seated",
+        reason: "crear template para verificar invariantes"
+      })
+    });
+    expect(template.status).toBe(201);
+    const templateJson = await template.json() as any;
+    created.templateIds.push(templateJson.id);
+
+    const versionOneData = buildLayoutData(`hard-v1-${scenario.suffix}`);
+    const versionOne = await authFetch(`/layout-templates/${templateJson.id}/versions`, ownerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        schemaVersion: "venue-layout.v1",
+        layoutData: versionOneData,
+        reason: "publicar versión base para snapshot inmutable"
+      })
+    });
+    expect(versionOne.status).toBe(201);
+    const versionOneJson = await versionOne.json() as any;
+    created.versionIds.push(versionOneJson.id);
+
+    const correlationId = `venue-hardening-${scenario.suffix}`;
+    const snapshotCreate = await authFetch(`/events/${scenario.event.id}/layout-snapshot`, adminToken, {
+      method: "POST",
+      headers: { "x-correlation-id": correlationId },
+      body: JSON.stringify({
+        organizerId: scenario.organizer.id,
+        layoutVersionId: versionOneJson.id,
+        reason: "crear snapshot con correlation id explícito"
+      })
+    });
+    expect(snapshotCreate.status).toBe(201);
+    const snapshotJson = await snapshotCreate.json() as any;
+    created.snapshotIds.push(snapshotJson.id);
+    expect(snapshotJson.layoutVersionId).toBe(versionOneJson.id);
+    expect(stableNormalize(snapshotJson.snapshotData)).toEqual(stableNormalize(versionOneData));
+
+    const persistedSnapshotBefore = await prisma.eventLayoutSnapshot.findUnique({ where: { id: snapshotJson.id } });
+    expect(persistedSnapshotBefore).toBeTruthy();
+    expect(persistedSnapshotBefore?.layoutVersionId).toBe(versionOneJson.id);
+    expect(stableNormalize(persistedSnapshotBefore?.snapshotData)).toEqual(stableNormalize(versionOneData));
+
+    const versionTwoData = buildLayoutData(`hard-v2-${scenario.suffix}`);
+    versionTwoData.seats[0]!.label = `SECRET-HARDENING-${scenario.suffix}`;
+    versionTwoData.accessPoints.push({ id: `gate-extra-${scenario.suffix}`, name: `Gate Extra ${scenario.suffix}`, kind: "gate" });
+    const versionTwo = await authFetch(`/layout-templates/${templateJson.id}/versions`, ownerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        schemaVersion: "venue-layout.v1",
+        layoutData: versionTwoData,
+        reason: "publicar segunda versión y verificar inmutabilidad"
+      })
+    });
+    expect(versionTwo.status).toBe(201);
+    const versionTwoJson = await versionTwo.json() as any;
+    created.versionIds.push(versionTwoJson.id);
+    expect(versionTwoJson.versionNumber).toBe(2);
+
+    const snapshotGet = await authFetch(`/events/${scenario.event.id}/layout-snapshot`, adminToken);
+    expect(snapshotGet.status).toBe(200);
+    const snapshotGetJson = await snapshotGet.json() as any;
+    expect(snapshotGetJson.layoutVersionId).toBe(versionOneJson.id);
+    expect(snapshotGetJson.snapshotHash).toBe(snapshotJson.snapshotHash);
+    expect(stableNormalize(snapshotGetJson.snapshotData)).toEqual(stableNormalize(versionOneData));
+    expect(JSON.stringify(snapshotGetJson.snapshotData)).not.toContain(`SECRET-HARDENING-${scenario.suffix}`);
+
+    const persistedSnapshotAfter = await prisma.eventLayoutSnapshot.findUnique({ where: { id: snapshotJson.id } });
+    expect(persistedSnapshotAfter?.layoutVersionId).toBe(versionOneJson.id);
+    expect(persistedSnapshotAfter?.snapshotHash).toBe(snapshotJson.snapshotHash);
+    expect(stableNormalize(persistedSnapshotAfter?.snapshotData)).toEqual(stableNormalize(versionOneData));
+
+    expect((await authFetch(`/events/${scenario.event.id}/layout-snapshot`, ownerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        organizerId: scenario.organizer.id,
+        layoutVersionId: versionTwoJson.id,
+        reason: "segundo snapshot debe seguir bloqueado"
+      })
+    })).status).toBe(409);
+
+    const otherVenue = await authFetch("/venues", otherOwnerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        organizerId: scenario.otherOrganizer.id,
+        name: `Foreign Venue ${scenario.suffix}`,
+        venueType: "arena",
+        reason: "crear venue externo para aislamiento cross organizer"
+      })
+    });
+    expect(otherVenue.status).toBe(201);
+    const otherVenueJson = await otherVenue.json() as any;
+    created.venueIds.push(otherVenueJson.id);
+
+    const otherTemplate = await authFetch(`/venues/${otherVenueJson.id}/layout-templates`, otherOwnerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        name: `Foreign Template ${scenario.suffix}`,
+        layoutMode: "ga",
+        reason: "crear template externo publicado"
+      })
+    });
+    expect(otherTemplate.status).toBe(201);
+    const otherTemplateJson = await otherTemplate.json() as any;
+    created.templateIds.push(otherTemplateJson.id);
+
+    const foreignVersion = await authFetch(`/layout-templates/${otherTemplateJson.id}/versions`, otherOwnerToken, {
+      method: "POST",
+      body: JSON.stringify({
+        schemaVersion: "venue-layout.v1",
+        layoutData: buildLayoutData(`foreign-${scenario.suffix}`, "ga"),
+        reason: "crear version externa para aislamiento final"
+      })
+    });
+    expect(foreignVersion.status).toBe(201);
+    const foreignVersionJson = await foreignVersion.json() as any;
+    created.versionIds.push(foreignVersionJson.id);
+
+    expect((await authFetch(`/events/${scenario.event.id}/layout-snapshot`, adminToken, {
+      method: "POST",
+      body: JSON.stringify({
+        organizerId: scenario.organizer.id,
+        layoutVersionId: foreignVersionJson.id,
+        reason: "version externa no debe filtrar existencia"
+      })
+    })).status).toBe(404);
+
+    const snapshotAudit = await prisma.auditLog.findFirst({
+      where: { entityId: snapshotJson.id, action: "event_layout_snapshot_created" },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(snapshotAudit).toBeTruthy();
+    if (snapshotAudit) created.auditLogIds.push(snapshotAudit.id);
+    const snapshotMeta = jsonMetadata(snapshotAudit);
+    expect(snapshotMeta.reason).toBe("crear snapshot con correlation id explícito");
+    expect(snapshotMeta.correlationId).toBe(correlationId);
+    expect(snapshotMeta.corelationId).toBeUndefined();
+    expect(JSON.stringify(snapshotMeta)).not.toContain(`SECRET-HARDENING-${scenario.suffix}`);
+    expect(JSON.stringify(snapshotMeta)).not.toContain(`zone-main-hard-v1-${scenario.suffix}`);
+  });
 });
 
 function jsonMetadata(row: { metadata?: unknown } | null | undefined) {
