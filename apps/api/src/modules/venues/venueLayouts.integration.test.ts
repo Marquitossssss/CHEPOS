@@ -750,7 +750,7 @@ describe.skipIf(!hasIntegrationEnv)("venue layouts backend foundation", () => {
     const snapshotMeta = jsonMetadata(snapshotAudit);
     expect(snapshotMeta.reason).toBe("crear snapshot con correlation id explícito");
     expect(snapshotMeta.correlationId).toBe(correlationId);
-    expect(snapshotMeta.corelationId).toBeUndefined();
+    expect(snapshotMeta).not.toHaveProperty("corelationId");
     expect(JSON.stringify(snapshotMeta)).not.toContain(`SECRET-HARDENING-${scenario.suffix}`);
     expect(JSON.stringify(snapshotMeta)).not.toContain(`zone-main-hard-v1-${scenario.suffix}`);
   });
